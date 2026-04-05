@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Demo backend for ratatui-json-ui.
+Demo backend for Jotui.
 Sends a full render message, then periodic patches to simulate live data.
 
 Usage:
@@ -38,7 +38,7 @@ def main():
                             "dir": "h",
                             "children": [
                                 {
-                                    "size": "50%",
+                                    "size": "70%",
                                     "children": [
                                         {"size": "3", "ref": "cpu_gauge"},
                                         {"size": "3", "ref": "mem_gauge"},
@@ -72,11 +72,11 @@ def main():
                         "text": [
                             {"text": " System Monitor ", "fg": "cyan", "bold": True},
                             " — ",
-                            {"text": "ratatui-json-ui demo", "fg": "dark_gray"}
+                            {"text": "Jotui demo", "fg": "dark_gray"}
                         ],
                         "align": "center",
                         "border": "rounded",
-                        "title": "ratatui-json-ui"
+                        "title": "Jotui"
                     },
                     {
                         "id": "cpu_gauge",

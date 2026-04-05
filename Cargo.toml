@@ -1,5 +1,5 @@
 [package]
-name = "ratatui-json-ui"
+name = "jotui"
 version = "0.1.0"
 edition = "2021"
 
