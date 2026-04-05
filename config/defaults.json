@@ -1,0 +1,98 @@
+{
+  "layout": {
+    "dir": "v",
+    "size": "*",
+    "margin": 0,
+    "border": "none",
+    "title": ""
+  },
+
+  "paragraph": {
+    "text": "",
+    "align": "left",
+    "wrap": true,
+    "border": "none",
+    "title": "",
+    "visible": true,
+    "style": { "fg": "white", "bg": "reset", "bold": false, "italic": false, "underline": false }
+  },
+
+  "list": {
+    "items": [],
+    "selected": null,
+    "scrollbar": false,
+    "border": "rounded",
+    "title": "",
+    "visible": true,
+    "focusable": true,
+    "highlight_symbol": ">> ",
+    "highlight_style": { "fg": "black", "bg": "white", "bold": true },
+    "style": { "fg": "white", "bg": "reset" }
+  },
+
+  "table": {
+    "headers": [],
+    "rows": [],
+    "widths": [],
+    "selected": null,
+    "scrollbar": false,
+    "border": "rounded",
+    "title": "",
+    "visible": true,
+    "focusable": true,
+    "highlight_style": { "fg": "black", "bg": "white" },
+    "header_style": { "fg": "yellow", "bg": "reset", "bold": true },
+    "style": { "fg": "white", "bg": "reset" }
+  },
+
+  "tabs": {
+    "titles": [],
+    "selected": 0,
+    "border": "none",
+    "title": "",
+    "visible": true,
+    "focusable": true,
+    "highlight_style": { "fg": "yellow", "bg": "reset", "bold": true },
+    "divider": " | ",
+    "style": { "fg": "white", "bg": "reset" }
+  },
+
+  "gauge": {
+    "value": 0,
+    "max": 100,
+    "label": "",
+    "border": "rounded",
+    "title": "",
+    "visible": true,
+    "style": { "fg": "green", "bg": "reset" }
+  },
+
+  "line_gauge": {
+    "value": 0,
+    "max": 100,
+    "label": "",
+    "border": "none",
+    "title": "",
+    "visible": true,
+    "style": { "fg": "green", "bg": "reset" }
+  },
+
+  "sparkline": {
+    "data": [],
+    "max": null,
+    "border": "none",
+    "title": "",
+    "visible": true,
+    "style": { "fg": "green", "bg": "reset" }
+  },
+
+  "bar_chart": {
+    "bars": [],
+    "max": null,
+    "bar_width": 3,
+    "border": "rounded",
+    "title": "",
+    "visible": true,
+    "style": { "fg": "white", "bg": "reset" }
+  }
+}
