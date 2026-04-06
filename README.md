@@ -154,17 +154,20 @@ Sent over the TCP connection with Content-Length framing.
   "params": {
     "page": "dashboard",
     "source": "log_list",
-    "action": "select",
+    "action": "submit",
     "value": 2
   }
 }
 ```
 
-| Action   | When                            | Value type       |
-|----------|---------------------------------|------------------|
-| `select` | Item selected in list/table     | integer (index)  |
-| `submit` | Enter pressed on widget         | string or null   |
-| `key`    | Key press (has extra `key` field) | null            |
+There are only two event actions:
+
+| Action   | When                              | Value                                              |
+|----------|-----------------------------------|----------------------------------------------------|
+| `submit` | Enter pressed on any widget       | depends on widget: index (list/table), string (input/tabs), null (other) |
+| `key`    | Any other key press               | null (key name in `key` field)                     |
+
+The backend determines context from the `source` field (widget ID).
 
 Key event example:
 
@@ -533,18 +536,101 @@ Default border: `"rounded"`
 
 ---
 
+### `input`
+
+Text input box with local editing. When focused, character keys type into the field.
+
+```json
+{
+  "type": "input", "id": "cmd",
+  "value": "",
+  "placeholder": "Type a command...",
+  "cursor": 0,
+  "focusable": true,
+  "border": "rounded", "title": "Command"
+}
+```
+
+| Property      | Type    | Default   |
+|---------------|---------|-----------|
+| `value`       | string  | `""`      |
+| `placeholder` | string  | `""`      |
+| `cursor`      | int     | `0`       |
+| `focusable`   | boolean | `true`    |
+
+**Keyboard (when focused):** type characters, Backspace/Delete, Left/Right/Home/End for cursor, Enter to submit. Tab/Shift+Tab still changes focus.
+
+On Enter, emits `submit` with `value` set to the current text string.
+
+Default border: `"rounded"`
+
+---
+
+### `chart`
+
+Line/scatter chart. Ideal for time-series data (ADC, sensors, metrics).
+
+```json
+{
+  "type": "chart", "id": "adc",
+  "datasets": [
+    {
+      "name": "CH0",
+      "data": [[0, 512], [1, 520], [2, 498]],
+      "style": { "fg": "cyan" },
+      "marker": "braille",
+      "graph_type": "line"
+    }
+  ],
+  "x_axis": { "title": "Time (s)", "bounds": [0, 100] },
+  "y_axis": { "title": "Value", "bounds": [0, 1024] },
+  "border": "rounded", "title": "ADC"
+}
+```
+
+| Property   | Type   | Default                              |
+|------------|--------|--------------------------------------|
+| `datasets` | array  | `[]` — array of dataset objects      |
+| `x_axis`   | object | `{ "title": "", "bounds": [0, 100] }` |
+| `y_axis`   | object | `{ "title": "", "bounds": [0, 100] }` |
+
+**Dataset object:**
+
+| Field        | Type   | Default     | Description                                |
+|--------------|--------|-------------|--------------------------------------------|
+| `name`       | string | `""`        | Legend label                               |
+| `data`       | array  | `[]`        | Array of `[x, y]` number pairs             |
+| `style`      | object | cyan fg     | Line/dot color                             |
+| `marker`     | string | `"braille"` | `"braille"`, `"dot"`, `"block"`, `"bar"`, `"halfblock"` |
+| `graph_type` | string | `"line"`    | `"line"` or `"scatter"`                    |
+
+**Axis object:**
+
+| Field    | Type   | Default    | Description                              |
+|----------|--------|------------|------------------------------------------|
+| `title`  | string | `""`       | Axis label                               |
+| `bounds` | array  | `[0, 100]` | `[min, max]` range                       |
+| `labels` | array  | auto       | Custom tick labels. Auto-generated from bounds if omitted |
+| `style`  | object | inherited  | Axis style                               |
+
+Default border: `"rounded"`
+
+---
+
 ## Focus & Keyboard
 
 Jotui manages focus internally. Widgets with `"focusable": true` are collected into a focus ring (depth-first tree order).
 
-| Key         | Action                                  |
-|-------------|-----------------------------------------|
-| `Tab`       | Next focusable widget                   |
-| `Shift+Tab` | Previous focusable widget              |
-| `↑` / `↓`  | Select prev/next item in list/table     |
-| `←` / `→`  | Switch tab in tabs widget               |
-| `Enter`     | Confirm selection (emits event)         |
-| `Ctrl+Q`   | Quit                                    |
+| Key         | Action                                            |
+|-------------|---------------------------------------------------|
+| `Tab`       | Next focusable widget                             |
+| `Shift+Tab` | Previous focusable widget                        |
+| `↑` / `↓`  | Select prev/next item in list/table               |
+| `←` / `→`  | Switch tab in tabs widget, move cursor in input   |
+| `Enter`     | Submit (emits `submit` event)                     |
+| `Ctrl+Q`   | Quit                                              |
+| Characters  | Type into focused input widget                    |
+| `Backspace` | Delete character in input widget                  |
 
 The focused widget gets a highlighted border (cyan, bold) automatically.
 

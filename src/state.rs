@@ -212,10 +212,40 @@ impl AppState {
 
     pub fn handle_navigate(&mut self, msg: &Value) {
         if let Some(page_id) = msg.get("page").and_then(|v| v.as_str()) {
-            if self.pages.contains_key(page_id) {
-                self.active_page = page_id.to_string();
-            } else {
-                eprintln!("[warn] navigate to nonexistent page: {}", page_id);
+            self.navigate_to(page_id);
+        }
+    }
+
+    /// Switch to a page and sync all tabs widgets on that page.
+    pub fn navigate_to(&mut self, page_id: &str) {
+        if !self.pages.contains_key(page_id) {
+            eprintln!("[warn] navigate to nonexistent page: {}", page_id);
+            return;
+        }
+
+        self.active_page = page_id.to_string();
+
+        // Find the page index so we can sync tabs widgets
+        let page_idx = self
+            .page_order
+            .iter()
+            .position(|id| id == page_id)
+            .map(|i| i as u64);
+
+        if let Some(idx) = page_idx {
+            if let Some(page) = self.pages.get_mut(page_id) {
+                for w in page.widgets.values_mut() {
+                    let is_tabs = w
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .map(|t| t == "tabs")
+                        .unwrap_or(false);
+                    if is_tabs {
+                        if let Some(obj) = w.as_object_mut() {
+                            obj.insert("selected".to_string(), Value::from(idx));
+                        }
+                    }
+                }
             }
         }
     }

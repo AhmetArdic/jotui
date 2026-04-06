@@ -19,11 +19,18 @@ import threading
 import os
 
 
+bytes_sent = 0
+bytes_recv = 0
+
+
 def send(sock, method, params):
     """Send a JSON-RPC 2.0 notification with Content-Length framing over TCP."""
+    global bytes_sent
     body = json.dumps({"jsonrpc": "2.0", "method": method, "params": params})
     header = f"Content-Length: {len(body)}\r\n\r\n"
-    sock.sendall(header.encode() + body.encode())
+    data = header.encode() + body.encode()
+    bytes_sent += len(data)
+    sock.sendall(data)
 
 
 def read_message(sockfile):
@@ -50,11 +57,13 @@ def read_message(sockfile):
 
 def event_reader(sockfile, log_file=None, event_queue=None):
     """Read events from Jotui via TCP in a background thread."""
+    global bytes_recv
     while True:
         try:
             msg = read_message(sockfile)
             if msg is None:
                 break
+            bytes_recv += len(json.dumps(msg))
             if log_file:
                 json.dump(msg, log_file)
                 log_file.write("\n")
@@ -63,6 +72,29 @@ def event_reader(sockfile, log_file=None, event_queue=None):
                 event_queue.append(msg)
         except Exception:
             break
+
+
+def format_bytes(n):
+    """Format byte count as human-readable string."""
+    if n < 1024:
+        return f"{n} B"
+    elif n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    else:
+        return f"{n / (1024 * 1024):.1f} MB"
+
+
+def format_traffic(tx, rx):
+    """Build styled span array for the traffic bar."""
+    return [
+        {"text": " TX: ", "fg": "green", "bold": True},
+        {"text": format_bytes(tx), "fg": "green"},
+        "  ",
+        {"text": "RX: ", "fg": "cyan", "bold": True},
+        {"text": format_bytes(rx), "fg": "cyan"},
+        "  ",
+        {"text": f"Total: {format_bytes(tx + rx)}", "fg": "dark_gray"}
+    ]
 
 
 def main():
@@ -204,6 +236,11 @@ def main():
                         ]
                     },
                     {
+                        "size": "1", "type": "paragraph", "id": "traffic_bar",
+                        "text": "TX: 0 B  RX: 0 B",
+                        "style": "$muted"
+                    },
+                    {
                         "size": "1", "type": "paragraph", "id": "status_bar",
                         "text": [
                             {"text": " ONLINE ", "fg": "black", "bg": "green", "bold": True},
@@ -254,6 +291,11 @@ def main():
                         "focusable": True,
                         "highlight_style": {"fg": "black", "bg": "magenta", "bold": True},
                         "header_style": "$warning"
+                    },
+                    {
+                        "size": "1", "type": "paragraph", "id": "traffic_bar2",
+                        "text": "TX: 0 B  RX: 0 B",
+                        "style": "$muted"
                     },
                     {
                         "size": "1", "type": "paragraph", "id": "status_bar2",
@@ -348,6 +390,11 @@ def main():
                         ]
                     },
                     {
+                        "size": "1", "type": "paragraph", "id": "traffic_bar3",
+                        "text": "TX: 0 B  RX: 0 B",
+                        "style": "$muted"
+                    },
+                    {
                         "size": "1", "type": "paragraph", "id": "status_bar3",
                         "text": [
                             {"text": " ADC ", "fg": "black", "bg": "yellow", "bold": True},
@@ -367,6 +414,7 @@ def main():
 
     # Periodic patches to simulate live data
     tick = 0
+    active_page = "dashboard"
     cpu_history = [10, 20, 30, 25, 40, 35, 50, 45, 30, 20, 15, 25, 35, 45, 55, 40, 30, 20]
     adc_ch0 = []
     adc_ch1 = []
@@ -377,96 +425,16 @@ def main():
             time.sleep(0.1)
             tick += 1
 
-            cpu = int(35 + 30 * math.sin(tick * 0.3) + random.randint(-5, 5))
-            cpu = max(0, min(100, cpu))
-            mem = min(100, 62 + tick // 10)
-            disk = int(45 + 20 * math.cos(tick * 0.2))
-
-            cpu_history.append(cpu)
-            if len(cpu_history) > 30:
-                cpu_history = cpu_history[-30:]
-
-            services = [
-                ["web", max(0, min(100, 82 + random.randint(-10, 10)))],
-                ["api", max(0, min(100, 64 + random.randint(-8, 8)))],
-                ["db", max(0, min(100, 45 + random.randint(-5, 5)))],
-                ["cache", max(0, min(100, 28 + random.randint(-3, 3)))],
-                ["queue", max(0, min(100, 51 + random.randint(-7, 7)))]
-            ]
-
-            if cpu > 80:
-                cpu_style = "$danger"
-            elif cpu > 60:
-                cpu_style = "$warning"
-            else:
-                cpu_style = "$ok"
-
-            send(conn, "patch", {
-                "page": "dashboard",
-                "updates": [
-                    {"id": "cpu_gauge", "value": cpu, "style": cpu_style},
-                    {"id": "mem_gauge", "value": mem},
-                    {"id": "disk_line", "value": disk},
-                    {"id": "cpu_spark", "data": cpu_history},
-                    {"id": "bar_chart", "bars": services}
-                ]
-            })
-
-            if tick % 5 == 0:
-                new_logs = [
-                    f"[{tick:04d}] CPU: {cpu}% | Mem: {mem}% | Disk: {disk}%",
-                    "System boot complete",
-                    "Network interface eth0 up",
-                    "SSH service started",
-                    "Firewall rules loaded",
-                    "NTP synchronized",
-                    "Monitoring agent ready",
-                    "Database connection OK",
-                    "API server listening :8080"
-                ]
-                send(conn, "patch", {
-                    "page": "dashboard",
-                    "updates": [{"id": "log_list", "items": new_logs}]
-                })
-
-            # ADC simulation data
-            t_sec = tick * 0.5
-            ch0_val = int(512 + 400 * math.sin(t_sec * 0.5) + random.randint(-20, 20))
-            ch1_val = int(300 + 250 * math.cos(t_sec * 0.3) + random.randint(-15, 15))
-            ch0_val = max(0, min(1024, ch0_val))
-            ch1_val = max(0, min(1024, ch1_val))
-
-            adc_ch0.append([t_sec, ch0_val])
-            adc_ch1.append([t_sec, ch1_val])
-            if len(adc_ch0) > 100:
-                adc_ch0 = adc_ch0[-100:]
-                adc_ch1 = adc_ch1[-100:]
-
-            x_min = adc_ch0[0][0] if adc_ch0 else 0
-            x_max = max(adc_ch0[-1][0] if adc_ch0 else 50, x_min + 25)
-
-            send(conn, "patch", {
-                "page": "adc",
-                "updates": [
-                    {
-                        "id": "adc_chart",
-                        "datasets": [
-                            {"name": "CH0", "data": adc_ch0, "style": {"fg": "cyan"}, "marker": "braille"},
-                            {"name": "CH1", "data": adc_ch1, "style": {"fg": "yellow"}, "marker": "braille"}
-                        ],
-                        "x_axis": {"title": "Time (s)", "bounds": [x_min, x_max]},
-                        "y_axis": {"title": "ADC Value", "bounds": [0, 1024]}
-                    },
-                    {"id": "adc_ch0_gauge", "value": ch0_val},
-                    {"id": "adc_ch1_gauge", "value": ch1_val}
-                ]
-            })
-
-            # Handle input submit events
+            # Process events from Jotui
             while event_queue:
                 evt = event_queue.pop(0)
                 params = evt.get("params", {})
-                if params.get("action") == "submit" and params.get("source") == "cmd_input":
+                action = params.get("action")
+
+                if action == "submit" and params.get("source") in ("nav_tabs", "nav_tabs2", "nav_tabs3"):
+                    active_page = params.get("value", active_page)
+
+                elif action == "submit" and params.get("source") == "cmd_input":
                     cmd_text = params.get("value", "")
                     if cmd_text:
                         cmd_log.insert(0, f"> {cmd_text}")
@@ -480,7 +448,94 @@ def main():
                             ]
                         })
 
-            if tick % 3 == 0:
+            # Only send patches for the active page
+            if active_page == "dashboard":
+                cpu = int(35 + 30 * math.sin(tick * 0.3) + random.randint(-5, 5))
+                cpu = max(0, min(100, cpu))
+                mem = min(100, 62 + tick // 10)
+                disk = int(45 + 20 * math.cos(tick * 0.2))
+
+                cpu_history.append(cpu)
+                if len(cpu_history) > 30:
+                    cpu_history = cpu_history[-30:]
+
+                services = [
+                    ["web", max(0, min(100, 82 + random.randint(-10, 10)))],
+                    ["api", max(0, min(100, 64 + random.randint(-8, 8)))],
+                    ["db", max(0, min(100, 45 + random.randint(-5, 5)))],
+                    ["cache", max(0, min(100, 28 + random.randint(-3, 3)))],
+                    ["queue", max(0, min(100, 51 + random.randint(-7, 7)))]
+                ]
+
+                if cpu > 80:
+                    cpu_style = "$danger"
+                elif cpu > 60:
+                    cpu_style = "$warning"
+                else:
+                    cpu_style = "$ok"
+
+                send(conn, "patch", {
+                    "page": "dashboard",
+                    "updates": [
+                        {"id": "cpu_gauge", "value": cpu, "style": cpu_style},
+                        {"id": "mem_gauge", "value": mem},
+                        {"id": "disk_line", "value": disk},
+                        {"id": "cpu_spark", "data": cpu_history},
+                        {"id": "bar_chart", "bars": services}
+                    ]
+                })
+
+                if tick % 5 == 0:
+                    new_logs = [
+                        f"[{tick:04d}] CPU: {cpu}% | Mem: {mem}% | Disk: {disk}%",
+                        "System boot complete",
+                        "Network interface eth0 up",
+                        "SSH service started",
+                        "Firewall rules loaded",
+                        "NTP synchronized",
+                        "Monitoring agent ready",
+                        "Database connection OK",
+                        "API server listening :8080"
+                    ]
+                    send(conn, "patch", {
+                        "page": "dashboard",
+                        "updates": [{"id": "log_list", "items": new_logs}]
+                    })
+
+            elif active_page == "adc":
+                t_sec = tick * 0.5
+                ch0_val = int(512 + 400 * math.sin(t_sec * 0.5) + random.randint(-20, 20))
+                ch1_val = int(300 + 250 * math.cos(t_sec * 0.3) + random.randint(-15, 15))
+                ch0_val = max(0, min(1024, ch0_val))
+                ch1_val = max(0, min(1024, ch1_val))
+
+                adc_ch0.append([t_sec, ch0_val])
+                adc_ch1.append([t_sec, ch1_val])
+                if len(adc_ch0) > 100:
+                    adc_ch0 = adc_ch0[-100:]
+                    adc_ch1 = adc_ch1[-100:]
+
+                x_min = adc_ch0[0][0] if adc_ch0 else 0
+                x_max = max(adc_ch0[-1][0] if adc_ch0 else 50, x_min + 25)
+
+                send(conn, "patch", {
+                    "page": "adc",
+                    "updates": [
+                        {
+                            "id": "adc_chart",
+                            "datasets": [
+                                {"name": "CH0", "data": adc_ch0, "style": {"fg": "cyan"}, "marker": "braille"},
+                                {"name": "CH1", "data": adc_ch1, "style": {"fg": "yellow"}, "marker": "braille"}
+                            ],
+                            "x_axis": {"title": "Time (s)", "bounds": [x_min, x_max]},
+                            "y_axis": {"title": "ADC Value", "bounds": [0, 1024]}
+                        },
+                        {"id": "adc_ch0_gauge", "value": ch0_val},
+                        {"id": "adc_ch1_gauge", "value": ch1_val}
+                    ]
+                })
+
+            elif active_page == "details" and tick % 3 == 0:
                 rows = [
                     ["1", "systemd", f"{random.uniform(0, 0.5):.1f}", "12", "running"],
                     ["245", "sshd", f"{random.uniform(0, 0.3):.1f}", "8", "running"],
@@ -495,6 +550,20 @@ def main():
                     "page": "details",
                     "updates": [{"id": "proc_table", "rows": rows}]
                 })
+
+            # Traffic stats — update on the active page only
+            traffic_text = format_traffic(bytes_sent, bytes_recv)
+            traffic_id = {
+                "dashboard": "traffic_bar",
+                "details": "traffic_bar2",
+                "adc": "traffic_bar3",
+            }.get(active_page)
+            if traffic_id:
+                send(conn, "patch", {
+                    "page": active_page,
+                    "updates": [{"id": traffic_id, "text": traffic_text}]
+                })
+
     except (BrokenPipeError, KeyboardInterrupt, OSError):
         pass
     finally:

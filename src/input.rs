@@ -203,14 +203,20 @@ pub fn handle_key(app: &mut AppState, code: KeyCode) {
                 match wtype.as_str() {
                     "tabs" => {
                         if let Some(target) = app.page_order.get(sel as usize).cloned() {
-                            app.active_page = target;
+                            app.navigate_to(&target);
+                            send_event(&make_event(
+                                &target,
+                                Some(&focused_id),
+                                "submit",
+                                Value::String(target.clone()),
+                            ));
                         }
                     }
                     "list" | "table" => {
                         send_event(&make_event(
                             &active_page,
                             Some(&focused_id),
-                            "select",
+                            "submit",
                             Value::from(sel),
                         ));
                     }
