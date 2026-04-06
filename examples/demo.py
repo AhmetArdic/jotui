@@ -107,191 +107,133 @@ def main():
     t = threading.Thread(target=event_reader, args=(sockfile, log_file), daemon=True)
     t.start()
 
-    # Initial render with all widget types across 2 pages
-    render_params = {
-        "styles": {
+    # Initial render — unified tree format
+    send(conn, "render", {
+        "defs": {
             "danger": {"fg": "red", "bold": True},
             "ok": {"fg": "green", "bold": True},
             "warning": {"fg": "yellow", "bold": True},
             "header": {"fg": "cyan", "bold": True},
             "muted": {"fg": "dark_gray"}
         },
-        "page_order": ["dashboard", "details"],
-        "pages": {
-            "dashboard": {
-                "layout": {
-                    "children": [
-                        {"size": "1", "ref": "nav_tabs"},
-                        {"size": "3", "ref": "title"},
-                        {
-                            "dir": "h",
-                            "children": [
-                                {
-                                    "size": "70%",
-                                    "children": [
-                                        {"size": "3", "ref": "cpu_gauge"},
-                                        {"size": "3", "ref": "mem_gauge"},
-                                        {"size": "3", "ref": "disk_line"},
-                                        {"ref": "log_list"}
-                                    ]
-                                },
-                                {
-                                    "children": [
-                                        {"size": "8", "ref": "cpu_spark"},
-                                        {"ref": "bar_chart"},
-                                        {"size": "1", "ref": "status_bar"}
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                },
-                "widgets": [
+        "pages": [
+            {
+                "id": "dashboard",
+                "children": [
                     {
-                        "id": "nav_tabs",
-                        "type": "tabs",
+                        "size": "3", "type": "tabs", "id": "nav_tabs",
                         "titles": ["Dashboard", "Details"],
-                        "selected": 0,
-                        "focusable": True,
-                        "highlight_style": {"fg": "cyan", "bold": True}
+                        "selected": 0, "focusable": True,
+                        "highlight_style": "$header",
+                        "border": "plain", "title": "Tabs"
                     },
                     {
-                        "id": "title",
-                        "type": "paragraph",
+                        "size": "3", "type": "paragraph", "id": "title",
                         "text": [
                             {"text": " System Monitor ", "fg": "cyan", "bold": True},
                             " — ",
                             {"text": "Jotui demo", "fg": "dark_gray"}
                         ],
-                        "align": "center",
-                        "border": "rounded",
-                        "title": "Jotui"
+                        "align": "center", "border": "rounded", "title": "Jotui"
                     },
                     {
-                        "id": "cpu_gauge",
-                        "type": "gauge",
-                        "value": 35,
-                        "max": 100,
-                        "label": "CPU",
-                        "border": "rounded",
-                        "title": "CPU Usage",
-                        "style": {"fg": "green"}
+                        "dir": "h",
+                        "children": [
+                            {
+                                "size": "70%",
+                                "children": [
+                                    {
+                                        "size": "3", "type": "gauge", "id": "cpu_gauge",
+                                        "value": 35, "max": 100, "label": "CPU",
+                                        "border": "rounded", "title": "CPU Usage",
+                                        "style": "$ok"
+                                    },
+                                    {
+                                        "size": "3", "type": "gauge", "id": "mem_gauge",
+                                        "value": 62, "max": 100, "label": "Memory",
+                                        "border": "rounded", "title": "Memory Usage",
+                                        "style": {"fg": "cyan"}
+                                    },
+                                    {
+                                        "size": "3", "type": "line_gauge", "id": "disk_line",
+                                        "value": 45, "max": 100, "label": "Disk I/O",
+                                        "border": "rounded", "title": "Disk",
+                                        "style": "$warning"
+                                    },
+                                    {
+                                        "type": "list", "id": "log_list",
+                                        "items": [
+                                            "System boot complete",
+                                            "Network interface eth0 up",
+                                            "SSH service started",
+                                            "Firewall rules loaded",
+                                            "NTP synchronized",
+                                            "Monitoring agent ready",
+                                            "Database connection OK",
+                                            "API server listening :8080"
+                                        ],
+                                        "selected": 0, "scrollbar": True,
+                                        "border": "rounded", "title": "System Logs",
+                                        "focusable": True, "highlight_symbol": "▶ ",
+                                        "highlight_style": {"fg": "black", "bg": "cyan", "bold": True}
+                                    }
+                                ]
+                            },
+                            {
+                                "children": [
+                                    {
+                                        "size": "8", "type": "sparkline", "id": "cpu_spark",
+                                        "data": [10, 20, 30, 25, 40, 35, 50, 45, 30, 20, 15, 25, 35, 45, 55, 40, 30, 20],
+                                        "border": "rounded", "title": "CPU History",
+                                        "style": "$ok"
+                                    },
+                                    {
+                                        "type": "bar_chart", "id": "bar_chart",
+                                        "bars": [
+                                            ["web", 82], ["api", 64], ["db", 45],
+                                            ["cache", 28], ["queue", 51]
+                                        ],
+                                        "bar_width": 5, "border": "rounded",
+                                        "title": "Service Load (%)"
+                                    }
+                                ]
+                            }
+                        ]
                     },
                     {
-                        "id": "mem_gauge",
-                        "type": "gauge",
-                        "value": 62,
-                        "max": 100,
-                        "label": "Memory",
-                        "border": "rounded",
-                        "title": "Memory Usage",
-                        "style": {"fg": "cyan"}
-                    },
-                    {
-                        "id": "disk_line",
-                        "type": "line_gauge",
-                        "value": 45,
-                        "max": 100,
-                        "label": "Disk I/O",
-                        "border": "rounded",
-                        "title": "Disk",
-                        "style": {"fg": "yellow"}
-                    },
-                    {
-                        "id": "log_list",
-                        "type": "list",
-                        "items": [
-                            "System boot complete",
-                            "Network interface eth0 up",
-                            "SSH service started",
-                            "Firewall rules loaded",
-                            "NTP synchronized",
-                            "Monitoring agent ready",
-                            "Database connection OK",
-                            "API server listening :8080"
-                        ],
-                        "selected": 0,
-                        "scrollbar": True,
-                        "border": "rounded",
-                        "title": "System Logs",
-                        "focusable": True,
-                        "highlight_symbol": "▶ ",
-                        "highlight_style": {"fg": "black", "bg": "cyan", "bold": True}
-                    },
-                    {
-                        "id": "cpu_spark",
-                        "type": "sparkline",
-                        "data": [10, 20, 30, 25, 40, 35, 50, 45, 30, 20, 15, 25, 35, 45, 55, 40, 30, 20],
-                        "border": "rounded",
-                        "title": "CPU History",
-                        "style": {"fg": "green"}
-                    },
-                    {
-                        "id": "bar_chart",
-                        "type": "bar_chart",
-                        "bars": [
-                            ["web", 82],
-                            ["api", 64],
-                            ["db", 45],
-                            ["cache", 28],
-                            ["queue", 51]
-                        ],
-                        "bar_width": 5,
-                        "border": "rounded",
-                        "title": "Service Load (%)"
-                    },
-                    {
-                        "id": "status_bar",
-                        "type": "paragraph",
+                        "size": "1", "type": "paragraph", "id": "status_bar",
                         "text": [
                             {"text": " ONLINE ", "fg": "black", "bg": "green", "bold": True},
                             " ",
-                            {"text": "Tab", "fg": "yellow", "bold": True},
-                            ": focus  ",
-                            {"text": "↑↓", "fg": "yellow", "bold": True},
-                            ": select  ",
-                            {"text": "←→", "fg": "yellow", "bold": True},
-                            ": tabs  ",
-                            {"text": "Enter", "fg": "yellow", "bold": True},
-                            ": confirm  ",
-                            {"text": "Ctrl+Q", "fg": "red", "bold": True},
-                            ": quit"
+                            {"text": "Tab", "fg": "yellow", "bold": True}, ": focus  ",
+                            {"text": "↑↓", "fg": "yellow", "bold": True}, ": select  ",
+                            {"text": "←→", "fg": "yellow", "bold": True}, ": tabs  ",
+                            {"text": "Enter", "fg": "yellow", "bold": True}, ": confirm  ",
+                            {"text": "Ctrl+Q", "fg": "red", "bold": True}, ": quit"
                         ],
-                        "style": "muted"
+                        "style": "$muted"
                     }
                 ]
             },
-            "details": {
-                "layout": {
-                    "children": [
-                        {"size": "1", "ref": "nav_tabs2"},
-                        {"size": "3", "ref": "detail_title"},
-                        {"ref": "proc_table"},
-                        {"size": "1", "ref": "status_bar2"}
-                    ]
-                },
-                "widgets": [
+            {
+                "id": "details",
+                "children": [
                     {
-                        "id": "nav_tabs2",
-                        "type": "tabs",
+                        "size": "3", "type": "tabs", "id": "nav_tabs2",
                         "titles": ["Dashboard", "Details"],
-                        "selected": 1,
-                        "focusable": True,
-                        "highlight_style": {"fg": "cyan", "bold": True}
+                        "selected": 1, "focusable": True,
+                        "highlight_style": "$header",
+                        "border": "plain", "title": "Tabs"
                     },
                     {
-                        "id": "detail_title",
-                        "type": "paragraph",
+                        "size": "3", "type": "paragraph", "id": "detail_title",
                         "text": [
                             {"text": " Process Details ", "fg": "magenta", "bold": True}
                         ],
-                        "align": "center",
-                        "border": "double",
-                        "title": "Details"
+                        "align": "center", "border": "double", "title": "Details"
                     },
                     {
-                        "id": "proc_table",
-                        "type": "table",
+                        "type": "table", "id": "proc_table",
                         "headers": ["PID", "Name", "CPU %", "Mem MB", "Status"],
                         "rows": [
                             ["1", "systemd", "0.1", "12", "running"],
@@ -304,38 +246,29 @@ def main():
                             ["4096", "grafana", "2.1", "196", "running"]
                         ],
                         "widths": ["10%", "25%", "15%", "15%", "*"],
-                        "selected": 0,
-                        "scrollbar": True,
-                        "border": "rounded",
-                        "title": "Processes",
+                        "selected": 0, "scrollbar": True,
+                        "border": "rounded", "title": "Processes",
                         "focusable": True,
                         "highlight_style": {"fg": "black", "bg": "magenta", "bold": True},
-                        "header_style": {"fg": "yellow", "bold": True}
+                        "header_style": "$warning"
                     },
                     {
-                        "id": "status_bar2",
-                        "type": "paragraph",
+                        "size": "1", "type": "paragraph", "id": "status_bar2",
                         "text": [
                             {"text": " ONLINE ", "fg": "black", "bg": "green", "bold": True},
                             " ",
-                            {"text": "Tab", "fg": "yellow", "bold": True},
-                            ": focus  ",
-                            {"text": "↑↓", "fg": "yellow", "bold": True},
-                            ": select  ",
-                            {"text": "←→", "fg": "yellow", "bold": True},
-                            ": tabs  ",
-                            {"text": "Ctrl+Q", "fg": "red", "bold": True},
-                            ": quit"
+                            {"text": "Tab", "fg": "yellow", "bold": True}, ": focus  ",
+                            {"text": "↑↓", "fg": "yellow", "bold": True}, ": select  ",
+                            {"text": "←→", "fg": "yellow", "bold": True}, ": tabs  ",
+                            {"text": "Ctrl+Q", "fg": "red", "bold": True}, ": quit"
                         ],
-                        "style": "muted"
+                        "style": "$muted"
                     }
                 ]
             }
-        },
+        ],
         "active": "dashboard"
-    }
-
-    send(conn, "render", render_params)
+    })
 
     # Periodic patches to simulate live data
     tick = 0
@@ -364,11 +297,11 @@ def main():
             ]
 
             if cpu > 80:
-                cpu_style = "danger"
+                cpu_style = "$danger"
             elif cpu > 60:
-                cpu_style = "warning"
+                cpu_style = "$warning"
             else:
-                cpu_style = {"fg": "green"}
+                cpu_style = "$ok"
 
             send(conn, "patch", {
                 "page": "dashboard",

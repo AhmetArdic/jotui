@@ -25,6 +25,22 @@ pub fn shallow_merge(base: &Value, overlay: &Value) -> Value {
     }
 }
 
+/// Resolve `$name` references in top-level string properties against defs.
+fn resolve_refs(value: &mut Value, defs: &Value) {
+    if let Some(obj) = value.as_object_mut() {
+        let keys: Vec<String> = obj.keys().cloned().collect();
+        for key in keys {
+            if let Some(s) = obj.get(&key).and_then(|v| v.as_str()).map(String::from) {
+                if let Some(name) = s.strip_prefix('$') {
+                    if let Some(resolved) = defs.get(name) {
+                        obj.insert(key, resolved.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Page {
     pub layout: Value,
@@ -34,30 +50,13 @@ pub struct Page {
 }
 
 impl Page {
-    pub fn from_json(layout: &Value, widgets: &[Value], defaults: &Value, styles: &Value) -> Self {
+    /// Build a page from a unified tree node (layout + widgets merged).
+    pub fn from_json(tree: &Value, defaults: &Value, defs: &Value) -> Self {
         let mut widget_map = HashMap::new();
-        for w in widgets {
-            if let Some(id) = w.get("id").and_then(|v| v.as_str()) {
-                let wtype = w.get("type").and_then(|v| v.as_str()).unwrap_or("paragraph");
+        extract_widgets(tree, defaults, defs, &mut widget_map);
 
-                // Layer 1: defaults for this widget type
-                let base = defaults
-                    .get(wtype)
-                    .cloned()
-                    .unwrap_or_else(|| Value::Object(Map::new()));
-
-                // Layer 2: render props (resolve style references)
-                let mut render_props = w.clone();
-                resolve_style_ref(&mut render_props, styles);
-
-                let merged = shallow_merge(&base, &render_props);
-                widget_map.insert(id.to_string(), merged);
-            }
-        }
-
-        // Build focus ring from layout tree (depth-first)
         let mut focus_ring = Vec::new();
-        build_focus_ring(layout, &widget_map, &mut focus_ring);
+        build_focus_ring(tree, &widget_map, &mut focus_ring);
 
         let focus_index = if focus_ring.is_empty() {
             None
@@ -66,19 +65,19 @@ impl Page {
         };
 
         Page {
-            layout: layout.clone(),
+            layout: tree.clone(),
             widgets: widget_map,
             focus_ring,
             focus_index,
         }
     }
 
-    pub fn apply_patch(&mut self, updates: &[Value], styles: &Value) {
+    pub fn apply_patch(&mut self, updates: &[Value], defs: &Value) {
         for update in updates {
             if let Some(id) = update.get("id").and_then(|v| v.as_str()) {
                 if let Some(existing) = self.widgets.get(id) {
                     let mut patch = update.clone();
-                    resolve_style_ref(&mut patch, styles);
+                    resolve_refs(&mut patch, defs);
                     let merged = shallow_merge(existing, &patch);
                     self.widgets.insert(id.to_string(), merged);
                 } else {
@@ -89,36 +88,46 @@ impl Page {
     }
 }
 
-fn resolve_style_ref(value: &mut Value, styles: &Value) {
-    if let Some(style_val) = value.get("style") {
-        if let Some(style_name) = style_val.as_str() {
-            if let Some(resolved) = styles.get(style_name) {
-                value
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("style".to_string(), resolved.clone());
-            }
+/// Walk the unified tree and extract widgets (nodes with `id` + `type`) into the map.
+fn extract_widgets(
+    node: &Value,
+    defaults: &Value,
+    defs: &Value,
+    widgets: &mut HashMap<String, Value>,
+) {
+    if let Some(id) = node.get("id").and_then(|v| v.as_str()) {
+        if node.get("type").is_some() {
+            let wtype = node.get("type").and_then(|v| v.as_str()).unwrap_or("paragraph");
+
+            // Layer 1: defaults for this widget type
+            let base = defaults
+                .get(wtype)
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new()));
+
+            // Layer 2: render props (resolve $ref references)
+            let mut render_props = node.clone();
+            resolve_refs(&mut render_props, defs);
+
+            let merged = shallow_merge(&base, &render_props);
+            widgets.insert(id.to_string(), merged);
         }
     }
-    // Also resolve highlight_style if it's a string reference
-    if let Some(hs_val) = value.get("highlight_style") {
-        if let Some(hs_name) = hs_val.as_str() {
-            if let Some(resolved) = styles.get(hs_name) {
-                value
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("highlight_style".to_string(), resolved.clone());
-            }
+
+    // Recurse into children
+    if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
+        for child in children {
+            extract_widgets(child, defaults, defs, widgets);
         }
     }
 }
 
 fn build_focus_ring(node: &Value, widgets: &HashMap<String, Value>, ring: &mut Vec<String>) {
-    if let Some(ref_id) = node.get("ref").and_then(|v| v.as_str()) {
-        if let Some(w) = widgets.get(ref_id) {
+    if let Some(id) = node.get("id").and_then(|v| v.as_str()) {
+        if let Some(w) = widgets.get(id) {
             let focusable = w.get("focusable").and_then(|v| v.as_bool()).unwrap_or(false);
             if focusable {
-                ring.push(ref_id.to_string());
+                ring.push(id.to_string());
             }
         }
     }
@@ -134,7 +143,7 @@ pub struct AppState {
     pub pages: HashMap<String, Page>,
     pub page_order: Vec<String>,
     pub active_page: String,
-    pub styles: Value,
+    pub defs: Value,
     pub defaults: Value,
 }
 
@@ -144,7 +153,7 @@ impl AppState {
             pages: HashMap::new(),
             page_order: Vec::new(),
             active_page: String::new(),
-            styles: Value::Object(Map::new()),
+            defs: Value::Object(Map::new()),
             defaults,
         }
     }
@@ -153,31 +162,16 @@ impl AppState {
         self.pages.clear();
         self.page_order.clear();
 
-        if let Some(styles) = msg.get("styles") {
-            self.styles = styles.clone();
+        if let Some(defs) = msg.get("defs") {
+            self.defs = defs.clone();
         }
 
-        if let Some(order) = msg.get("page_order").and_then(|v| v.as_array()) {
-            self.page_order = order
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-        }
-
-        if let Some(pages) = msg.get("pages").and_then(|v| v.as_object()) {
-            for (page_id, page_def) in pages {
-                let layout = page_def.get("layout").cloned().unwrap_or(Value::Object(Map::new()));
-                let widgets = page_def
-                    .get("widgets")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-
-                let page = Page::from_json(&layout, &widgets, &self.defaults, &self.styles);
-                self.pages.insert(page_id.clone(), page);
-
-                if !self.page_order.contains(page_id) {
-                    self.page_order.push(page_id.clone());
+        if let Some(pages) = msg.get("pages").and_then(|v| v.as_array()) {
+            for page_def in pages {
+                if let Some(page_id) = page_def.get("id").and_then(|v| v.as_str()) {
+                    let page = Page::from_json(page_def, &self.defaults, &self.defs);
+                    self.page_order.push(page_id.to_string());
+                    self.pages.insert(page_id.to_string(), page);
                 }
             }
         }
@@ -210,7 +204,7 @@ impl AppState {
         };
 
         if let Some(page) = self.pages.get_mut(page_id) {
-            page.apply_patch(&updates, &self.styles);
+            page.apply_patch(&updates, &self.defs);
         } else {
             eprintln!("[warn] patch targets nonexistent page: {}", page_id);
         }

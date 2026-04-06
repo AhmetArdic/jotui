@@ -21,10 +21,10 @@ python examples/demo.py
 ```
 
 Startup flow:
-1. Your backend spawns Jotui as a subprocess
-2. Jotui prints `{"port": N}` to stdout (one line)
-3. Jotui takes over stdout for terminal rendering
-4. Your backend connects to `127.0.0.1:N` via TCP and communicates over JSON-RPC 2.0
+1. Your backend listens on a TCP port
+2. Your backend spawns Jotui with `--port <PORT>`
+3. Jotui connects to the backend's TCP port
+4. Communication happens over JSON-RPC 2.0 with Content-Length framing
 
 ---
 
@@ -35,7 +35,7 @@ All communication uses [JSON-RPC 2.0](https://www.jsonrpc.org/specification) not
 ```
 Content-Length: 84\r\n
 \r\n
-{"jsonrpc":"2.0","method":"render","params":{"pages":{"main":{"layout":...}}}}
+{"jsonrpc":"2.0","method":"render","params":{...}}
 ```
 
 Each message has a `Content-Length` header, a blank line, then the JSON body (exactly that many bytes).
@@ -55,28 +55,38 @@ All messages are **notifications** (no `id` field).
 
 ### `render` — Define the entire UI
 
-Sent once at startup. Contains all pages, widgets, styles, and the active page.
+Sent once at startup. Contains all pages as a unified tree — layout and widgets are defined together.
 
 ```json
 {
   "jsonrpc": "2.0",
   "method": "render",
   "params": {
-    "styles": {
+    "defs": {
       "danger": { "fg": "red", "bold": true },
-      "ok": { "fg": "green" }
+      "ok": { "fg": "green" },
+      "std_border": "rounded"
     },
-    "page_order": ["dashboard", "settings"],
-    "pages": {
-      "dashboard": {
-        "layout": { "..." : "..." },
-        "widgets": [ "..." ]
+    "pages": [
+      {
+        "id": "dashboard",
+        "children": [
+          { "size": "3", "type": "paragraph", "id": "header", "text": "My App" },
+          {
+            "dir": "h",
+            "children": [
+              { "size": "30%", "type": "list", "id": "sidebar", "items": ["Home", "Settings"] },
+              { "type": "paragraph", "id": "main", "text": "Content here" }
+            ]
+          },
+          { "size": "1", "type": "paragraph", "id": "footer", "text": "Status: OK" }
+        ]
       },
-      "settings": {
-        "layout": { "..." : "..." },
-        "widgets": [ "..." ]
+      {
+        "id": "settings",
+        "children": [ "..." ]
       }
-    },
+    ],
     "active": "dashboard"
   }
 }
@@ -84,12 +94,11 @@ Sent once at startup. Contains all pages, widgets, styles, and the active page.
 
 **Params fields:**
 
-| Field        | Type   | Required | Description                                          |
-|--------------|--------|----------|------------------------------------------------------|
-| `styles`     | object | no       | Named style dictionary for reuse across widgets      |
-| `page_order` | array  | no       | Page display order (for tabs). Defaults to insertion order |
-| `pages`      | object | yes      | Map of page ID → page definition                     |
-| `active`     | string | no       | Initially active page. Defaults to first page        |
+| Field    | Type   | Required | Description                                          |
+|----------|--------|----------|------------------------------------------------------|
+| `defs`   | object | no       | Named definitions for reuse via `$name` references   |
+| `pages`  | array  | yes      | Ordered array of page definitions                    |
+| `active` | string | no       | Initially active page. Defaults to first page        |
 
 ### `patch` — Update widgets
 
@@ -102,7 +111,7 @@ Sent anytime after render. Only include changed properties — everything else i
   "params": {
     "page": "dashboard",
     "updates": [
-      { "id": "cpu_gauge", "value": 87, "style": "danger" },
+      { "id": "cpu_gauge", "value": 87, "style": "$danger" },
       { "id": "status", "text": "Warning!" }
     ]
   }
@@ -176,30 +185,23 @@ Events **not** sent to backend: scroll, focus/blur, resize (all handled internal
 
 ---
 
-## Page Definition
+## Unified Tree
 
-Each page has a `layout` tree and a `widgets` array.
+Each page is a tree where **layout and widgets are defined together**. A node with `type` is a widget (leaf). A node with `children` is a layout container. There is no separate `layout` / `widgets` split.
 
 ```json
 {
-  "layout": {
-    "children": [
-      { "size": "3", "ref": "header" },
-      {
-        "dir": "h",
-        "children": [
-          { "size": "30%", "ref": "sidebar" },
-          { "ref": "main" }
-        ]
-      },
-      { "size": "1", "ref": "footer" }
-    ]
-  },
-  "widgets": [
-    { "id": "header", "type": "paragraph", "text": "My App" },
-    { "id": "sidebar", "type": "list", "items": ["Home", "Settings"] },
-    { "id": "main", "type": "paragraph", "text": "Content here" },
-    { "id": "footer", "type": "paragraph", "text": "Status: OK" }
+  "id": "dashboard",
+  "children": [
+    { "size": "3", "type": "paragraph", "id": "header", "text": "My App" },
+    {
+      "dir": "h",
+      "children": [
+        { "size": "30%", "type": "list", "id": "sidebar", "items": ["Home", "Settings"] },
+        { "type": "paragraph", "id": "main", "text": "Content here" }
+      ]
+    },
+    { "size": "1", "type": "paragraph", "id": "footer", "text": "Status: OK" }
   ]
 }
 ```
@@ -217,29 +219,67 @@ This produces:
 └─────────────────────────────────────┘
 ```
 
----
+### Container Nodes
 
-## Layout Nodes
-
-A layout node is either a **container** (has `children`) or a **leaf** (has `ref` pointing to a widget ID). Never both.
+Containers have `children` and control layout direction.
 
 | Field      | Type    | Default | Description                              |
 |------------|---------|---------|------------------------------------------|
 | `dir`      | string  | `"v"`   | `"v"` (vertical) or `"h"` (horizontal)  |
 | `size`     | string  | `"*"`   | Size constraint (see below)              |
 | `margin`   | integer | `0`     | Margin in cells around this node         |
-| `children` | array   | —       | Child layout nodes (containers only)     |
-| `ref`      | string  | —       | Widget ID (leaves only)                  |
+| `children` | array   | —       | Child nodes                              |
+
+### Widget Nodes
+
+Widgets have `type` and are the leaf nodes of the tree.
+
+| Field  | Type   | Required | Description                              |
+|--------|--------|----------|------------------------------------------|
+| `type` | string | yes      | Widget type name                         |
+| `id`   | string | yes      | Unique within the page (needed for patch and events) |
+| `size` | string | `"*"`    | Size constraint (see below)              |
+
+Plus widget-specific properties (see Widgets section).
 
 ### Size Constraints
 
 | Value   | Meaning                    | Example              |
 |---------|----------------------------|----------------------|
-| `"*"`   | Fill remaining space       | `{ "ref": "main" }` |
-| `"50%"` | Percentage of parent       | `{ "size": "50%", "ref": "sidebar" }` |
-| `"3"`   | Fixed number of rows/cols  | `{ "size": "3", "ref": "header" }`    |
-| `">5"`  | Minimum 5 cells            | `{ "size": ">5", "ref": "panel" }`    |
-| `"<20"` | Maximum 20 cells           | `{ "size": "<20", "ref": "panel" }`   |
+| `"*"`   | Fill remaining space       | `{ "type": "paragraph", "id": "main", "text": "..." }` |
+| `"50%"` | Percentage of parent       | `{ "size": "50%", "type": "list", ... }` |
+| `"3"`   | Fixed number of rows/cols  | `{ "size": "3", "type": "paragraph", ... }` |
+| `">5"`  | Minimum 5 cells            | `{ "size": ">5", ... }` |
+| `"<20"` | Maximum 20 cells           | `{ "size": "<20", ... }` |
+
+---
+
+## Defs — Reusable Definitions
+
+The `defs` object lets you define values once and reference them anywhere in widget properties using `$name` syntax.
+
+```json
+{
+  "defs": {
+    "danger": { "fg": "red", "bold": true },
+    "ok": { "fg": "green" },
+    "header": { "fg": "cyan", "bold": true },
+    "muted": { "fg": "dark_gray" }
+  }
+}
+```
+
+Use with `$` prefix in any top-level widget property:
+
+```json
+{ "type": "gauge", "id": "cpu", "value": 72, "style": "$ok", "highlight_style": "$header" }
+```
+
+```json
+{ "type": "paragraph", "id": "status", "text": "OK", "style": "$muted" }
+```
+
+`$` references work in both `render` and `patch` messages. Any string value starting with `$` is looked up in `defs` and replaced with the corresponding value. If the reference is not found, the string is kept as-is.
 
 ---
 
@@ -256,7 +296,7 @@ Every widget supports these:
 | `visible` | boolean       | `true`  | If false, space is reserved but widget is blank   |
 | `border`  | string        | varies  | `"none"`, `"plain"`, `"rounded"`, `"double"`, `"thick"` |
 | `title`   | string        | `""`    | Title in the border (ignored if border is `"none"`) |
-| `style`   | string/object | varies  | Style object or reference to `styles` dictionary  |
+| `style`   | string/object | varies  | Style object or `$name` reference to `defs`       |
 
 ### Style Object
 
@@ -265,8 +305,6 @@ Every widget supports these:
 ```
 
 **Colors:** `"red"`, `"green"`, `"blue"`, `"yellow"`, `"cyan"`, `"magenta"`, `"gray"`, `"dark_gray"`, `"white"`, `"black"`, `"reset"`, `"#FF5500"` (hex), `"color(214)"` (256-palette)
-
-**Style references:** When `style` is a string (e.g. `"danger"`), it resolves from the `styles` dictionary in the `render` message.
 
 ### Styled Text
 
@@ -291,8 +329,7 @@ Multi-line styled text.
 
 ```json
 {
-  "id": "title",
-  "type": "paragraph",
+  "type": "paragraph", "id": "title",
   "text": [
     { "text": "Dashboard", "fg": "cyan", "bold": true },
     " — powered by Jotui"
@@ -320,8 +357,7 @@ Selectable, scrollable list.
 
 ```json
 {
-  "id": "logs",
-  "type": "list",
+  "type": "list", "id": "logs",
   "items": [
     "Boot complete",
     "Network ready",
@@ -356,8 +392,7 @@ Tabular data with headers and selectable rows.
 
 ```json
 {
-  "id": "processes",
-  "type": "table",
+  "type": "table", "id": "processes",
   "headers": ["PID", "Name", "CPU %", "Status"],
   "rows": [
     ["1", "systemd", "0.1", "running"],
@@ -377,7 +412,7 @@ Tabular data with headers and selectable rows.
 |-------------------|----------|--------------------------------------------------|
 | `headers`         | array    | `[]` — array of strings                          |
 | `rows`            | array    | `[]` — array of string arrays                    |
-| `widths`          | array    | `[]` — constraint strings (same as layout `size`). Empty = even distribution |
+| `widths`          | array    | `[]` — constraint strings (same as `size`). Empty = even distribution |
 | `selected`        | int/null | `null`                                           |
 | `scrollbar`       | boolean  | `false`                                          |
 | `focusable`       | boolean  | `true`                                           |
@@ -394,12 +429,11 @@ Tab bar for navigation.
 
 ```json
 {
-  "id": "nav",
-  "type": "tabs",
+  "type": "tabs", "id": "nav",
   "titles": ["Dashboard", "Settings", "Logs"],
   "selected": 0,
   "focusable": true,
-  "highlight_style": { "fg": "cyan", "bold": true },
+  "highlight_style": "$header",
   "divider": " | "
 }
 ```
@@ -422,14 +456,10 @@ Progress bar with label.
 
 ```json
 {
-  "id": "cpu",
-  "type": "gauge",
-  "value": 72,
-  "max": 100,
-  "label": "CPU",
-  "style": { "fg": "green" },
-  "border": "rounded",
-  "title": "CPU Usage"
+  "type": "gauge", "id": "cpu",
+  "value": 72, "max": 100, "label": "CPU",
+  "style": "$ok",
+  "border": "rounded", "title": "CPU Usage"
 }
 ```
 
@@ -459,13 +489,11 @@ Miniature bar chart from a data array.
 
 ```json
 {
-  "id": "cpu_history",
-  "type": "sparkline",
+  "type": "sparkline", "id": "cpu_history",
   "data": [10, 20, 30, 25, 40, 35, 50, 45],
   "max": 100,
-  "style": { "fg": "green" },
-  "border": "rounded",
-  "title": "CPU History"
+  "style": "$ok",
+  "border": "rounded", "title": "CPU History"
 }
 ```
 
@@ -484,17 +512,14 @@ Vertical bar chart.
 
 ```json
 {
-  "id": "services",
-  "type": "bar_chart",
+  "type": "bar_chart", "id": "services",
   "bars": [
     ["web", 82],
     ["api", 64],
     ["db", 45]
   ],
-  "bar_width": 5,
-  "max": 100,
-  "border": "rounded",
-  "title": "Service Load (%)"
+  "bar_width": 5, "max": 100,
+  "border": "rounded", "title": "Service Load (%)"
 }
 ```
 
@@ -510,7 +535,7 @@ Default border: `"rounded"`
 
 ## Focus & Keyboard
 
-Jotui manages focus internally. Widgets with `"focusable": true` are collected into a focus ring (depth-first layout order).
+Jotui manages focus internally. Widgets with `"focusable": true` are collected into a focus ring (depth-first tree order).
 
 | Key         | Action                                  |
 |-------------|-----------------------------------------|
@@ -535,14 +560,14 @@ Layer 2: render message    → backend's initial definition
 Layer 3: patch messages    → incremental updates
 ```
 
-Each layer shallow-merges on top of the previous. Nested objects (like `style`) merge one level deep.
+Each layer shallow-merges on top of the previous. Nested objects (like `style`) merge one level deep. `$name` references are resolved before merging.
 
 ```
 defaults:  { value: 0, max: 100, style: { fg: "green", bg: "reset" } }
-render:    { value: 45, label: "Temp" }
-patch:     { value: 87, style: { fg: "red" } }
+render:    { value: 45, label: "Temp", style: "$ok" }
+patch:     { value: 87, style: "$danger" }
 ─────────────────────────────────────────────────────
-final:     { value: 87, max: 100, label: "Temp", style: { fg: "red", bg: "reset" } }
+final:     { value: 87, max: 100, label: "Temp", style: { fg: "red", bold: true } }
 ```
 
 ---
@@ -552,31 +577,28 @@ final:     { value: 87, max: 100, label: "Temp", style: { fg: "red", bg: "reset"
 The smallest valid Jotui program (Python):
 
 ```python
-import json, socket, subprocess
+import json, socket, subprocess, sys
 
-proc = subprocess.Popen(
-    ["cargo", "run", "--quiet"],
-    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=None
-)
+# Backend listens on TCP
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.bind(("127.0.0.1", 0))
+server.listen(1)
+port = server.getsockname()[1]
 
-# Read port from Jotui's first stdout line
-port = json.loads(proc.stdout.readline())["port"]
-proc.stdout.close()
+# Spawn Jotui as subprocess
+proc = subprocess.Popen(["cargo", "run", "--quiet", "--", "--port", str(port)])
 
-# Connect via TCP
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect(("127.0.0.1", port))
+# Wait for connection
+conn, _ = server.accept()
+server.close()
 
 # Send render message
-msg = {"jsonrpc": "2.0", "method": "render", "params": {
-    "pages": {"main": {
-        "layout": {"ref": "hello"},
-        "widgets": [{"id": "hello", "type": "paragraph", "text": "Hello, world!"}]
-    }},
-    "active": "main"
-}}
-body = json.dumps(msg)
-sock.sendall(f"Content-Length: {len(body)}\r\n\r\n".encode() + body.encode())
+msg = json.dumps({"jsonrpc": "2.0", "method": "render", "params": {
+    "pages": [{"id": "main", "children": [
+        {"type": "paragraph", "id": "hello", "text": "Hello, world!"}
+    ]}]
+}})
+conn.sendall(f"Content-Length: {len(msg)}\r\n\r\n{msg}".encode())
 proc.wait()
 ```
 
@@ -595,4 +617,4 @@ Jotui never crashes on bad input. All errors are logged to stderr.
 | Patch targets missing page    | Ignored, logged                     |
 | Patch targets missing widget  | That update skipped, logged         |
 | Navigate to missing page      | Stays on current page, logged       |
-| Style reference not found     | Falls back to widget type defaults  |
+| `$name` ref not found         | String kept as-is, uses defaults    |

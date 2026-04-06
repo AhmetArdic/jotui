@@ -36,13 +36,20 @@ pub fn parse_layout(node: &Value) -> LayoutNode {
         .unwrap_or("*");
     let constraint = parse_constraint(size);
 
-    if let Some(ref_id) = node.get("ref").and_then(|v| v.as_str()) {
+    // Leaf: node has "type" field (it's a widget)
+    if node.get("type").is_some() {
+        let ref_id = node
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         return LayoutNode::Leaf {
-            ref_id: ref_id.to_string(),
+            ref_id,
             size: constraint,
         };
     }
 
+    // Container: has "children"
     let dir = match node.get("dir").and_then(|v| v.as_str()).unwrap_or("v") {
         "h" => Direction::Horizontal,
         _ => Direction::Vertical,
