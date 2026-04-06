@@ -1,52 +1,111 @@
 use serde_json::Value;
-use std::fs::{File, OpenOptions};
-use std::io::Write as IoWrite;
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::net::TcpStream;
 use std::sync::{Mutex, OnceLock};
 
-static EVENT_FILE: OnceLock<Mutex<File>> = OnceLock::new();
+static CONN: OnceLock<Mutex<BufWriter<TcpStream>>> = OnceLock::new();
 
-pub fn init_event_output() {
-    let path = std::env::args()
-        .skip_while(|a| a != "--events-file")
-        .nth(1)
-        .unwrap_or_else(|| "events.jsonl".to_string());
+/// Connect to the backend's TCP listener and spawn a reader thread.
+/// Returns the mpsc receiver for incoming JSON-RPC messages.
+pub fn connect(port: u16, tx: std::sync::mpsc::Sender<Value>) {
+    let stream = TcpStream::connect(("127.0.0.1", port))
+        .unwrap_or_else(|e| panic!("Failed to connect to backend on port {}: {}", port, e));
 
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .expect("Failed to open events output file");
+    let reader_stream = stream.try_clone().expect("Failed to clone TCP stream");
+    CONN.set(Mutex::new(BufWriter::new(stream))).ok();
 
-    EVENT_FILE.set(Mutex::new(file)).ok();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(reader_stream);
+        loop {
+            match read_message(&mut reader) {
+                Ok(Some(val)) => {
+                    if tx.send(val).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => continue,
+                Err(_) => break,
+            }
+        }
+    });
 }
 
-pub fn send_event(event_json: &Value) {
-    if let Ok(s) = serde_json::to_string(event_json) {
-        if let Some(file_mutex) = EVENT_FILE.get() {
-            if let Ok(mut file) = file_mutex.lock() {
-                let _ = writeln!(file, "{}", s);
-                let _ = file.flush();
-            }
+/// Read a JSON-RPC message with Content-Length framing from a buffered reader.
+pub fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
+    let mut content_length: Option<usize> = None;
+
+    loop {
+        let mut line = String::new();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed"));
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
+            content_length = rest.trim().parse().ok();
+        }
+    }
+
+    let len = match content_length {
+        Some(n) => n,
+        None => {
+            eprintln!("[warn] missing Content-Length header");
+            return Ok(None);
+        }
+    };
+
+    let mut buf = vec![0u8; len];
+    reader.read_exact(&mut buf)?;
+
+    match serde_json::from_slice(&buf) {
+        Ok(val) => Ok(Some(val)),
+        Err(e) => {
+            eprintln!("[warn] invalid JSON in message body: {}", e);
+            Ok(None)
         }
     }
 }
 
+/// Write a JSON-RPC message with Content-Length framing to a writer.
+pub fn write_message(writer: &mut impl Write, json: &Value) -> io::Result<()> {
+    let body = serde_json::to_string(json).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let header = format!("Content-Length: {}\r\n\r\n", body.len());
+    writer.write_all(header.as_bytes())?;
+    writer.write_all(body.as_bytes())?;
+    writer.flush()
+}
+
+/// Send an event notification to the backend via TCP.
+pub fn send_event(params: &Value) {
+    let envelope = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "event",
+        "params": params
+    });
+
+    if let Some(conn) = CONN.get() {
+        if let Ok(mut writer) = conn.lock() {
+            let _ = write_message(&mut *writer, &envelope);
+        }
+    }
+}
+
+/// Construct event params for a widget action (select, submit, etc.).
 pub fn make_event(page: &str, source: Option<&str>, action: &str, value: Value) -> Value {
-    let mut ev = serde_json::json!({
-        "msg": "event",
+    serde_json::json!({
         "page": page,
         "source": source,
         "action": action,
-    });
-    ev.as_object_mut()
-        .unwrap()
-        .insert("value".to_string(), value);
-    ev
+        "value": value
+    })
 }
 
+/// Construct event params for a key press.
 pub fn make_key_event(page: &str, source: Option<&str>, key: &str) -> Value {
     serde_json::json!({
-        "msg": "event",
         "page": page,
         "source": source,
         "action": "key",

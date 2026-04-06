@@ -11,76 +11,72 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use serde_json::Value;
-use std::io::{self, BufRead};
+use std::io;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use layout::{parse_layout, resolve_layout};
 use render::render_widget;
 use state::AppState;
-use transport::{init_event_output, load_defaults};
+use transport::{connect, load_defaults};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_event_output();
-
-    let (tx, rx) = mpsc::channel::<Value>();
-
-    // Stdin reader thread
-    std::thread::spawn(move || {
-        let stdin = io::stdin();
-        let reader = stdin.lock();
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    let l = l.trim().to_string();
-                    if l.is_empty() {
-                        continue;
-                    }
-                    match serde_json::from_str::<Value>(&l) {
-                        Ok(val) => {
-                            if tx.send(val).is_err() {
-                                break;
-                            }
-                        }
-                        Err(e) => eprintln!("[warn] invalid JSON: {}", e),
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[error] stdin read error: {}", e);
-                    break;
-                }
+fn parse_port() -> u16 {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--port" {
+            if let Some(val) = args.next() {
+                return val.parse().expect("--port must be a number");
             }
         }
-    });
+        if let Some(val) = arg.strip_prefix("--port=") {
+            return val.parse().expect("--port must be a number");
+        }
+    }
+    eprintln!("Usage: jotui --port <PORT>");
+    std::process::exit(1);
+}
 
-    // Setup terminal
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let port = parse_port();
+
+    // Setup terminal (stdout is the real terminal — no pipes)
     enable_raw_mode()?;
-    let mut stderr = io::stderr();
-    execute!(stderr, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stderr);
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     // Panic hook for graceful restore
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stderr(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
         original_hook(info);
     }));
+
+    // Connect to backend via TCP
+    let (tx, rx) = mpsc::channel::<Value>();
+    connect(port, tx);
 
     let defaults = load_defaults();
     let mut app = AppState::new(defaults);
     let mut running = true;
 
     while running {
-        // Process pending JSON messages
+        // Process pending JSON-RPC messages from TCP
         while let Ok(msg) = rx.try_recv() {
-            match msg.get("msg").and_then(|v| v.as_str()) {
-                Some("render") => app.handle_render(&msg),
-                Some("patch") => app.handle_patch(&msg),
-                Some("navigate") => app.handle_navigate(&msg),
-                Some(other) => eprintln!("[warn] unknown msg type: {}", other),
-                None => eprintln!("[warn] message missing 'msg' field"),
+            let method = msg.get("method").and_then(|v| v.as_str());
+            let params = msg
+                .get("params")
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
+
+            match method {
+                Some("render") => app.handle_render(&params),
+                Some("patch") => app.handle_patch(&params),
+                Some("navigate") => app.handle_navigate(&params),
+                Some(other) => eprintln!("[warn] unknown method: {}", other),
+                None => eprintln!("[warn] message missing 'method' field"),
             }
         }
 

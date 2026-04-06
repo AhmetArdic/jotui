@@ -1,8 +1,8 @@
-# ratatui-json-ui — Specification v1.0
+# Jotui — Specification v1.0
 
 ## Purpose
 
-This document is the single source of truth for implementing **ratatui-json-ui**: a JSON-driven terminal UI engine built on Ratatui. It is written for LLM-assisted implementation. Every architectural decision, data format, merge rule, and behavioral contract is defined here. If something is not in this document, it is not part of the design.
+This document is the single source of truth for implementing **Jotui**: a JSON-driven terminal UI engine built on Ratatui. It is written for LLM-assisted implementation. Every architectural decision, data format, merge rule, and behavioral contract is defined here. If something is not in this document, it is not part of the design.
 
 ---
 
