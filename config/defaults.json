@@ -94,5 +94,26 @@
     "title": "",
     "visible": true,
     "style": { "fg": "white", "bg": "reset" }
+  },
+
+  "input": {
+    "value": "",
+    "placeholder": "",
+    "cursor": 0,
+    "border": "rounded",
+    "title": "",
+    "visible": true,
+    "focusable": true,
+    "style": { "fg": "white", "bg": "reset" }
+  },
+
+  "chart": {
+    "datasets": [],
+    "x_axis": { "title": "", "bounds": [0, 100] },
+    "y_axis": { "title": "", "bounds": [0, 100] },
+    "border": "rounded",
+    "title": "",
+    "visible": true,
+    "style": { "fg": "white", "bg": "reset" }
   }
 }

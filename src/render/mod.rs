@@ -7,6 +7,8 @@ mod tabs;
 mod gauge;
 mod sparkline;
 mod bar_chart;
+mod input;
+mod chart;
 
 use ratatui::{layout::Rect, Frame};
 use serde_json::Value;
@@ -34,6 +36,8 @@ pub fn render_widget(f: &mut Frame, area: Rect, widget: &Value, focused: bool) {
         "line_gauge" => gauge::render_line(f, area, widget, focused),
         "sparkline" => sparkline::render(f, area, widget, focused),
         "bar_chart" => bar_chart::render(f, area, widget, focused),
+        "input" => input::render(f, area, widget, focused),
+        "chart" => chart::render(f, area, widget, focused),
         _ => {
             eprintln!("[warn] unknown widget type: {}", wtype);
         }

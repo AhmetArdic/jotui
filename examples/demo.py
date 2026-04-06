@@ -48,7 +48,7 @@ def read_message(sockfile):
     return json.loads(body)
 
 
-def event_reader(sockfile, log_file=None):
+def event_reader(sockfile, log_file=None, event_queue=None):
     """Read events from Jotui via TCP in a background thread."""
     while True:
         try:
@@ -59,6 +59,8 @@ def event_reader(sockfile, log_file=None):
                 json.dump(msg, log_file)
                 log_file.write("\n")
                 log_file.flush()
+            if event_queue is not None:
+                event_queue.append(msg)
         except Exception:
             break
 
@@ -104,7 +106,8 @@ def main():
         idx = sys.argv.index("--log")
         log_path = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else "events.log"
         log_file = open(log_path, "a")
-    t = threading.Thread(target=event_reader, args=(sockfile, log_file), daemon=True)
+    event_queue = []
+    t = threading.Thread(target=event_reader, args=(sockfile, log_file, event_queue), daemon=True)
     t.start()
 
     # Initial render — unified tree format
@@ -122,7 +125,7 @@ def main():
                 "children": [
                     {
                         "size": "3", "type": "tabs", "id": "nav_tabs",
-                        "titles": ["Dashboard", "Details"],
+                        "titles": ["Dashboard", "Details", "ADC Monitor"],
                         "selected": 0, "focusable": True,
                         "highlight_style": "$header",
                         "border": "plain", "title": "Tabs"
@@ -220,7 +223,7 @@ def main():
                 "children": [
                     {
                         "size": "3", "type": "tabs", "id": "nav_tabs2",
-                        "titles": ["Dashboard", "Details"],
+                        "titles": ["Dashboard", "Details", "ADC Monitor"],
                         "selected": 1, "focusable": True,
                         "highlight_style": "$header",
                         "border": "plain", "title": "Tabs"
@@ -265,6 +268,97 @@ def main():
                         "style": "$muted"
                     }
                 ]
+            },
+            {
+                "id": "adc",
+                "children": [
+                    {
+                        "size": "3", "type": "tabs", "id": "nav_tabs3",
+                        "titles": ["Dashboard", "Details", "ADC Monitor"],
+                        "selected": 2, "focusable": True,
+                        "highlight_style": "$header",
+                        "border": "plain", "title": "Tabs"
+                    },
+                    {
+                        "size": "3", "type": "paragraph", "id": "adc_title",
+                        "text": [
+                            {"text": " ADC Monitor ", "fg": "yellow", "bold": True},
+                            " — ",
+                            {"text": "Live analog readings", "fg": "dark_gray"}
+                        ],
+                        "align": "center", "border": "rounded"
+                    },
+                    {
+                        "dir": "h",
+                        "children": [
+                            {
+                                "size": "70%",
+                                "children": [
+                                    {
+                                        "type": "chart", "id": "adc_chart",
+                                        "datasets": [
+                                            {
+                                                "name": "CH0",
+                                                "data": [],
+                                                "style": {"fg": "cyan"},
+                                                "marker": "braille"
+                                            },
+                                            {
+                                                "name": "CH1",
+                                                "data": [],
+                                                "style": {"fg": "yellow"},
+                                                "marker": "braille"
+                                            }
+                                        ],
+                                        "x_axis": {"title": "Time (s)", "bounds": [0, 50]},
+                                        "y_axis": {"title": "ADC Value", "bounds": [0, 1024]},
+                                        "border": "rounded", "title": "ADC Channels"
+                                    }
+                                ]
+                            },
+                            {
+                                "children": [
+                                    {
+                                        "size": "3", "type": "gauge", "id": "adc_ch0_gauge",
+                                        "value": 0, "max": 1024, "label": "CH0",
+                                        "border": "rounded", "title": "Channel 0",
+                                        "style": {"fg": "cyan"}
+                                    },
+                                    {
+                                        "size": "3", "type": "gauge", "id": "adc_ch1_gauge",
+                                        "value": 0, "max": 1024, "label": "CH1",
+                                        "border": "rounded", "title": "Channel 1",
+                                        "style": {"fg": "yellow"}
+                                    },
+                                    {
+                                        "size": "3", "type": "input", "id": "cmd_input",
+                                        "placeholder": "Type a command...",
+                                        "border": "rounded", "title": "Command",
+                                        "focusable": True
+                                    },
+                                    {
+                                        "type": "list", "id": "cmd_log",
+                                        "items": ["Ready. Type a command and press Enter."],
+                                        "border": "rounded", "title": "Command Log",
+                                        "scrollbar": True
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "size": "1", "type": "paragraph", "id": "status_bar3",
+                        "text": [
+                            {"text": " ADC ", "fg": "black", "bg": "yellow", "bold": True},
+                            " ",
+                            {"text": "Tab", "fg": "yellow", "bold": True}, ": focus  ",
+                            {"text": "Type", "fg": "yellow", "bold": True}, ": input  ",
+                            {"text": "Enter", "fg": "yellow", "bold": True}, ": send  ",
+                            {"text": "Ctrl+Q", "fg": "red", "bold": True}, ": quit"
+                        ],
+                        "style": "$muted"
+                    }
+                ]
             }
         ],
         "active": "dashboard"
@@ -273,6 +367,9 @@ def main():
     # Periodic patches to simulate live data
     tick = 0
     cpu_history = [10, 20, 30, 25, 40, 35, 50, 45, 30, 20, 15, 25, 35, 45, 55, 40, 30, 20]
+    adc_ch0 = []
+    adc_ch1 = []
+    cmd_log = ["Ready. Type a command and press Enter."]
 
     try:
         while proc.poll() is None:
@@ -330,6 +427,57 @@ def main():
                     "page": "dashboard",
                     "updates": [{"id": "log_list", "items": new_logs}]
                 })
+
+            # ADC simulation data
+            t_sec = tick * 0.5
+            ch0_val = int(512 + 400 * math.sin(t_sec * 0.5) + random.randint(-20, 20))
+            ch1_val = int(300 + 250 * math.cos(t_sec * 0.3) + random.randint(-15, 15))
+            ch0_val = max(0, min(1024, ch0_val))
+            ch1_val = max(0, min(1024, ch1_val))
+
+            adc_ch0.append([t_sec, ch0_val])
+            adc_ch1.append([t_sec, ch1_val])
+            if len(adc_ch0) > 100:
+                adc_ch0 = adc_ch0[-100:]
+                adc_ch1 = adc_ch1[-100:]
+
+            x_min = adc_ch0[0][0] if adc_ch0 else 0
+            x_max = max(adc_ch0[-1][0] if adc_ch0 else 50, x_min + 25)
+
+            send(conn, "patch", {
+                "page": "adc",
+                "updates": [
+                    {
+                        "id": "adc_chart",
+                        "datasets": [
+                            {"name": "CH0", "data": adc_ch0, "style": {"fg": "cyan"}, "marker": "braille"},
+                            {"name": "CH1", "data": adc_ch1, "style": {"fg": "yellow"}, "marker": "braille"}
+                        ],
+                        "x_axis": {"title": "Time (s)", "bounds": [x_min, x_max]},
+                        "y_axis": {"title": "ADC Value", "bounds": [0, 1024]}
+                    },
+                    {"id": "adc_ch0_gauge", "value": ch0_val},
+                    {"id": "adc_ch1_gauge", "value": ch1_val}
+                ]
+            })
+
+            # Handle input submit events
+            while event_queue:
+                evt = event_queue.pop(0)
+                params = evt.get("params", {})
+                if params.get("action") == "submit" and params.get("source") == "cmd_input":
+                    cmd_text = params.get("value", "")
+                    if cmd_text:
+                        cmd_log.insert(0, f"> {cmd_text}")
+                        if len(cmd_log) > 20:
+                            cmd_log = cmd_log[:20]
+                        send(conn, "patch", {
+                            "page": "adc",
+                            "updates": [
+                                {"id": "cmd_log", "items": cmd_log},
+                                {"id": "cmd_input", "value": "", "cursor": 0}
+                            ]
+                        })
 
             if tick % 3 == 0:
                 rows = [
