@@ -340,7 +340,8 @@ def main():
                                         "type": "list", "id": "cmd_log",
                                         "items": ["Ready. Type a command and press Enter."],
                                         "border": "rounded", "title": "Command Log",
-                                        "scrollbar": True
+                                        "scrollbar": True,
+                                        "focusable": True
                                     }
                                 ]
                             }
@@ -373,7 +374,7 @@ def main():
 
     try:
         while proc.poll() is None:
-            time.sleep(0.5)
+            time.sleep(0.1)
             tick += 1
 
             cpu = int(35 + 30 * math.sin(tick * 0.3) + random.randint(-5, 5))
@@ -469,8 +470,8 @@ def main():
                     cmd_text = params.get("value", "")
                     if cmd_text:
                         cmd_log.insert(0, f"> {cmd_text}")
-                        if len(cmd_log) > 20:
-                            cmd_log = cmd_log[:20]
+                        if len(cmd_log) > 50:
+                            cmd_log = cmd_log[:50]
                         send(conn, "patch", {
                             "page": "adc",
                             "updates": [
