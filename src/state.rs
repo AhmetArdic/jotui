@@ -79,50 +79,67 @@ impl Page {
                     let mut patch = update.clone();
                     resolve_refs(&mut patch, defs);
 
-                    // Extract append_datasets before merging — it's handled specially
-                    let append_datasets = patch
+                    // Extract append_data before merging — handled based on widget type
+                    let append_data = patch
                         .as_object_mut()
-                        .and_then(|o| o.remove("append_datasets"));
+                        .and_then(|o| o.remove("append_data"));
 
                     let mut merged = shallow_merge(existing, &patch);
 
-                    // Append data points to existing dataset arrays without replacing them
-                    if let Some(Value::Array(append_arr)) = append_datasets {
+                    if let Some(Value::Array(append_arr)) = append_data {
                         let max_pts = merged
                             .get("max_data_points")
                             .and_then(|v| v.as_u64())
                             .map(|v| v as usize)
                             .unwrap_or(usize::MAX);
 
-                        if let Some(obj) = merged.as_object_mut() {
-                            if let Some(Value::Array(datasets)) = obj.get_mut("datasets") {
-                                for append_item in &append_arr {
-                                    let name = append_item
-                                        .get("name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
-                                    if let Some(new_pts) =
-                                        append_item.get("data").and_then(|v| v.as_array())
-                                    {
-                                        for ds in datasets.iter_mut() {
-                                            let ds_name = ds
-                                                .get("name")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("");
-                                            if ds_name == name {
-                                                if let Some(ds_data) = ds
-                                                    .get_mut("data")
-                                                    .and_then(|v| v.as_array_mut())
-                                                {
-                                                    ds_data.extend(new_pts.iter().cloned());
-                                                    if ds_data.len() > max_pts {
-                                                        let drain = ds_data.len() - max_pts;
-                                                        ds_data.drain(0..drain);
+                        let widget_type = merged
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        if widget_type == "chart" {
+                            // Named datasets: append_data = [{name, data: [[x,y],...]}]
+                            if let Some(obj) = merged.as_object_mut() {
+                                if let Some(Value::Array(datasets)) = obj.get_mut("datasets") {
+                                    for append_item in &append_arr {
+                                        let name = append_item
+                                            .get("name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        if let Some(new_pts) =
+                                            append_item.get("data").and_then(|v| v.as_array())
+                                        {
+                                            for ds in datasets.iter_mut() {
+                                                if ds.get("name").and_then(|v| v.as_str()).unwrap_or("") == name {
+                                                    if let Some(ds_data) = ds
+                                                        .get_mut("data")
+                                                        .and_then(|v| v.as_array_mut())
+                                                    {
+                                                        ds_data.extend(new_pts.iter().cloned());
+                                                        if ds_data.len() > max_pts {
+                                                            let drain = ds_data.len() - max_pts;
+                                                            ds_data.drain(0..drain);
+                                                        }
                                                     }
+                                                    break;
                                                 }
-                                                break;
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Flat data array: append_data = [v1, v2, ...]
+                            if let Some(obj) = merged.as_object_mut() {
+                                let data = obj
+                                    .entry("data")
+                                    .or_insert_with(|| Value::Array(vec![]));
+                                if let Some(arr) = data.as_array_mut() {
+                                    arr.extend(append_arr.iter().cloned());
+                                    if arr.len() > max_pts {
+                                        let drain = arr.len() - max_pts;
+                                        arr.drain(0..drain);
                                     }
                                 }
                             }

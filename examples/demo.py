@@ -419,10 +419,11 @@ def main():
     tick = 0
     adc_tick = 0
     active_page = "dashboard"
-    cpu_history = [10, 20, 30, 25, 40, 35, 50, 45, 30, 20, 15, 25, 35, 45, 55, 40, 30, 20]
     adc_ch0 = []
     adc_ch1 = []
     cmd_log = ["Ready. Type a command and press Enter."]
+    prev_mem = None
+    prev_disk = None
     prev_bytes_sent = 0
     prev_bytes_recv = 0
     prev_time = time.monotonic()
@@ -462,10 +463,6 @@ def main():
                 mem = min(100, 62 + tick // 10)
                 disk = int(45 + 20 * math.cos(tick * 0.2))
 
-                cpu_history.append(cpu)
-                if len(cpu_history) > 30:
-                    cpu_history = cpu_history[-30:]
-
                 services = [
                     ["web", max(0, min(100, 82 + random.randint(-10, 10)))],
                     ["api", max(0, min(100, 64 + random.randint(-8, 8)))],
@@ -481,16 +478,19 @@ def main():
                 else:
                     cpu_style = "$ok"
 
-                send(conn, "patch", {
-                    "page": "dashboard",
-                    "updates": [
-                        {"id": "cpu_gauge", "value": cpu, "style": cpu_style},
-                        {"id": "mem_gauge", "value": mem},
-                        {"id": "disk_line", "value": disk},
-                        {"id": "cpu_spark", "data": cpu_history},
-                        {"id": "bar_chart", "bars": services}
-                    ]
-                })
+                updates = [
+                    {"id": "cpu_gauge", "value": cpu, "style": cpu_style},
+                    # Only send mem/disk when they actually change
+                    *(([{"id": "mem_gauge", "value": mem}]) if mem != prev_mem else []),
+                    *(([{"id": "disk_line", "value": disk}]) if disk != prev_disk else []),
+                    # append_data sends only the new point — Rust appends to existing data array
+                    {"id": "cpu_spark", "append_data": [cpu], "max_data_points": 30},
+                    {"id": "bar_chart", "bars": services},
+                ]
+                prev_mem = mem
+                prev_disk = disk
+
+                send(conn, "patch", {"page": "dashboard", "updates": updates})
 
                 if tick % 5 == 0:
                     new_logs = [
@@ -527,13 +527,13 @@ def main():
                 x_min = adc_ch0[0][0] if adc_ch0 else 0
                 x_max = max(adc_ch0[-1][0] if adc_ch0 else 50, x_min + 25)
 
-                # Send only the new data point via append_datasets — O(1) bandwidth regardless of history size
+                # Send only the new data point via append_data — O(1) bandwidth regardless of history size
                 send(conn, "patch", {
                     "page": "adc",
                     "updates": [
                         {
                             "id": "adc_chart",
-                            "append_datasets": [
+                            "append_data": [
                                 {"name": "CH0", "data": [[t_sec, ch0_val]]},
                                 {"name": "CH1", "data": [[t_sec, ch1_val]]}
                             ],
@@ -561,28 +561,29 @@ def main():
                     "updates": [{"id": "proc_table", "rows": rows}]
                 })
 
-            # Traffic stats — update on the active page only
-            now = time.monotonic()
-            elapsed = now - prev_time
-            if elapsed > 0:
-                tx_rate = (bytes_sent - prev_bytes_sent) / elapsed
-                rx_rate = (bytes_recv - prev_bytes_recv) / elapsed
-            else:
-                tx_rate = rx_rate = 0.0
-            prev_bytes_sent = bytes_sent
-            prev_bytes_recv = bytes_recv
-            prev_time = now
-            traffic_text = format_traffic(bytes_sent, bytes_recv, tx_rate, rx_rate)
-            traffic_id = {
-                "dashboard": "traffic_bar",
-                "details": "traffic_bar2",
-                "adc": "traffic_bar3",
-            }.get(active_page)
-            if traffic_id:
-                send(conn, "patch", {
-                    "page": active_page,
-                    "updates": [{"id": traffic_id, "text": traffic_text}]
-                })
+            # Traffic stats — update once per second (every 10 ticks) to save bandwidth
+            if tick % 10 == 0:
+                now = time.monotonic()
+                elapsed = now - prev_time
+                if elapsed > 0:
+                    tx_rate = (bytes_sent - prev_bytes_sent) / elapsed
+                    rx_rate = (bytes_recv - prev_bytes_recv) / elapsed
+                else:
+                    tx_rate = rx_rate = 0.0
+                prev_bytes_sent = bytes_sent
+                prev_bytes_recv = bytes_recv
+                prev_time = now
+                traffic_text = format_traffic(bytes_sent, bytes_recv, tx_rate, rx_rate)
+                traffic_id = {
+                    "dashboard": "traffic_bar",
+                    "details": "traffic_bar2",
+                    "adc": "traffic_bar3",
+                }.get(active_page)
+                if traffic_id:
+                    send(conn, "patch", {
+                        "page": active_page,
+                        "updates": [{"id": traffic_id, "text": traffic_text}]
+                    })
 
     except (BrokenPipeError, KeyboardInterrupt, OSError):
         pass

@@ -597,17 +597,14 @@ Line/scatter chart. Ideal for time-series data (ADC, sensors, metrics).
 
 **Incremental data append (patch only):**
 
-Use `append_datasets` instead of `datasets` in a patch update to add new points without replacing the full history. Jotui appends the points to the existing data arrays and trims oldest entries to `max_data_points`. This keeps bandwidth constant (one point per tick) regardless of history size.
+Use `append_data` in a patch update to add new points without replacing the full history. Jotui appends the points and trims oldest entries to `max_data_points`. Behavior depends on widget type:
+
+- **`chart`** — expects `[{name, data: [[x, y], ...]}]` objects, appends to the matching named dataset
+- **Other widgets** (e.g. `sparkline`) — expects a flat array of scalar values, appends to `data`
 
 ```json
-{
-  "id": "adc_chart",
-  "append_datasets": [
-    { "name": "CH0", "data": [[42.5, 718]] },
-    { "name": "CH1", "data": [[42.5, 312]] }
-  ],
-  "x_axis": { "bounds": [0, 50] }
-}
+{ "id": "adc_chart",  "append_data": [{ "name": "CH0", "data": [[42.5, 718]] }, { "name": "CH1", "data": [[42.5, 312]] }], "x_axis": { "bounds": [0, 50] } }
+{ "id": "cpu_spark",  "append_data": [87], "max_data_points": 30 }
 ```
 
 **Dataset object:**
