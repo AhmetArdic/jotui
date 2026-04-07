@@ -1,5 +1,6 @@
+use flate2::read::ZlibDecoder;
 use serde_json::Value;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::sync::{Mutex, OnceLock};
 
@@ -31,8 +32,10 @@ pub fn connect(port: u16, tx: std::sync::mpsc::Sender<Value>) {
 }
 
 /// Read a JSON-RPC message with Content-Length framing from a buffered reader.
+/// Supports optional `Content-Encoding: deflate` (zlib) compression.
 pub fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
     let mut content_length: Option<usize> = None;
+    let mut compressed = false;
 
     loop {
         let mut line = String::new();
@@ -46,6 +49,8 @@ pub fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
         }
         if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
             content_length = rest.trim().parse().ok();
+        } else if trimmed.eq_ignore_ascii_case("Content-Encoding: deflate") {
+            compressed = true;
         }
     }
 
@@ -60,7 +65,17 @@ pub fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf)?;
 
-    match serde_json::from_slice(&buf) {
+    let json_bytes: Vec<u8> = if compressed {
+        let mut out = Vec::new();
+        ZlibDecoder::new(&buf[..]).read_to_end(&mut out).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("deflate decode: {}", e))
+        })?;
+        out
+    } else {
+        buf
+    };
+
+    match serde_json::from_slice(&json_bytes) {
         Ok(val) => Ok(Some(val)),
         Err(e) => {
             eprintln!("[warn] invalid JSON in message body: {}", e);

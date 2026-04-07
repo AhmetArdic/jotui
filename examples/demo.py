@@ -17,6 +17,7 @@ import math
 import random
 import threading
 import os
+import zlib
 
 
 bytes_sent = 0
@@ -24,11 +25,13 @@ bytes_recv = 0
 
 
 def send(sock, method, params):
-    """Send a JSON-RPC 2.0 notification with Content-Length framing over TCP."""
+    """Send a JSON-RPC 2.0 notification with Content-Length framing over TCP.
+    Body is zlib-compressed (Content-Encoding: deflate)."""
     global bytes_sent
-    body = json.dumps({"jsonrpc": "2.0", "method": method, "params": params})
-    header = f"Content-Length: {len(body)}\r\n\r\n"
-    data = header.encode() + body.encode()
+    body = json.dumps({"jsonrpc": "2.0", "method": method, "params": params}).encode()
+    compressed = zlib.compress(body, level=6)
+    header = f"Content-Length: {len(compressed)}\r\nContent-Encoding: deflate\r\n\r\n"
+    data = header.encode() + compressed
     bytes_sent += len(data)
     sock.sendall(data)
 
