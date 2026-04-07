@@ -78,7 +78,57 @@ impl Page {
                 if let Some(existing) = self.widgets.get(id) {
                     let mut patch = update.clone();
                     resolve_refs(&mut patch, defs);
-                    let merged = shallow_merge(existing, &patch);
+
+                    // Extract append_datasets before merging — it's handled specially
+                    let append_datasets = patch
+                        .as_object_mut()
+                        .and_then(|o| o.remove("append_datasets"));
+
+                    let mut merged = shallow_merge(existing, &patch);
+
+                    // Append data points to existing dataset arrays without replacing them
+                    if let Some(Value::Array(append_arr)) = append_datasets {
+                        let max_pts = merged
+                            .get("max_data_points")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as usize)
+                            .unwrap_or(usize::MAX);
+
+                        if let Some(obj) = merged.as_object_mut() {
+                            if let Some(Value::Array(datasets)) = obj.get_mut("datasets") {
+                                for append_item in &append_arr {
+                                    let name = append_item
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    if let Some(new_pts) =
+                                        append_item.get("data").and_then(|v| v.as_array())
+                                    {
+                                        for ds in datasets.iter_mut() {
+                                            let ds_name = ds
+                                                .get("name")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("");
+                                            if ds_name == name {
+                                                if let Some(ds_data) = ds
+                                                    .get_mut("data")
+                                                    .and_then(|v| v.as_array_mut())
+                                                {
+                                                    ds_data.extend(new_pts.iter().cloned());
+                                                    if ds_data.len() > max_pts {
+                                                        let drain = ds_data.len() - max_pts;
+                                                        ds_data.drain(0..drain);
+                                                    }
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     self.widgets.insert(id.to_string(), merged);
                 } else {
                     eprintln!("[warn] patch targets nonexistent widget: {}", id);

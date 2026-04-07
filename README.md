@@ -588,11 +588,27 @@ Line/scatter chart. Ideal for time-series data (ADC, sensors, metrics).
 }
 ```
 
-| Property   | Type   | Default                              |
-|------------|--------|--------------------------------------|
-| `datasets` | array  | `[]` — array of dataset objects      |
-| `x_axis`   | object | `{ "title": "", "bounds": [0, 100] }` |
-| `y_axis`   | object | `{ "title": "", "bounds": [0, 100] }` |
+| Property          | Type   | Default                              |
+|-------------------|--------|--------------------------------------|
+| `datasets`        | array  | `[]` — array of dataset objects      |
+| `x_axis`          | object | `{ "title": "", "bounds": [0, 100] }` |
+| `y_axis`          | object | `{ "title": "", "bounds": [0, 100] }` |
+| `max_data_points` | int    | unlimited — oldest points trimmed when exceeded |
+
+**Incremental data append (patch only):**
+
+Use `append_datasets` instead of `datasets` in a patch update to add new points without replacing the full history. Jotui appends the points to the existing data arrays and trims oldest entries to `max_data_points`. This keeps bandwidth constant (one point per tick) regardless of history size.
+
+```json
+{
+  "id": "adc_chart",
+  "append_datasets": [
+    { "name": "CH0", "data": [[42.5, 718]] },
+    { "name": "CH1", "data": [[42.5, 312]] }
+  ],
+  "x_axis": { "bounds": [0, 50] }
+}
+```
 
 **Dataset object:**
 

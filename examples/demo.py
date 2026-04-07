@@ -84,14 +84,16 @@ def format_bytes(n):
         return f"{n / (1024 * 1024):.1f} MB"
 
 
-def format_traffic(tx, rx):
+def format_traffic(tx, rx, tx_rate=0.0, rx_rate=0.0):
     """Build styled span array for the traffic bar."""
     return [
         {"text": " TX: ", "fg": "green", "bold": True},
         {"text": format_bytes(tx), "fg": "green"},
+        {"text": f" ({format_bytes(int(tx_rate))}/s)", "fg": "green"},
         "  ",
         {"text": "RX: ", "fg": "cyan", "bold": True},
         {"text": format_bytes(rx), "fg": "cyan"},
+        {"text": f" ({format_bytes(int(rx_rate))}/s)", "fg": "cyan"},
         "  ",
         {"text": f"Total: {format_bytes(tx + rx)}", "fg": "dark_gray"}
     ]
@@ -338,6 +340,7 @@ def main():
                                 "children": [
                                     {
                                         "type": "chart", "id": "adc_chart",
+                                        "max_data_points": 100,
                                         "datasets": [
                                             {
                                                 "name": "CH0",
@@ -414,11 +417,15 @@ def main():
 
     # Periodic patches to simulate live data
     tick = 0
+    adc_tick = 0
     active_page = "dashboard"
     cpu_history = [10, 20, 30, 25, 40, 35, 50, 45, 30, 20, 15, 25, 35, 45, 55, 40, 30, 20]
     adc_ch0 = []
     adc_ch1 = []
     cmd_log = ["Ready. Type a command and press Enter."]
+    prev_bytes_sent = 0
+    prev_bytes_recv = 0
+    prev_time = time.monotonic()
 
     try:
         while proc.poll() is None:
@@ -503,7 +510,9 @@ def main():
                     })
 
             elif active_page == "adc":
-                t_sec = tick * 0.5
+                # adc_tick only advances while on the ADC page — no time gaps on page switch
+                adc_tick += 1
+                t_sec = adc_tick * 0.5
                 ch0_val = int(512 + 400 * math.sin(t_sec * 0.5) + random.randint(-20, 20))
                 ch1_val = int(300 + 250 * math.cos(t_sec * 0.3) + random.randint(-15, 15))
                 ch0_val = max(0, min(1024, ch0_val))
@@ -518,14 +527,15 @@ def main():
                 x_min = adc_ch0[0][0] if adc_ch0 else 0
                 x_max = max(adc_ch0[-1][0] if adc_ch0 else 50, x_min + 25)
 
+                # Send only the new data point via append_datasets — O(1) bandwidth regardless of history size
                 send(conn, "patch", {
                     "page": "adc",
                     "updates": [
                         {
                             "id": "adc_chart",
-                            "datasets": [
-                                {"name": "CH0", "data": adc_ch0, "style": {"fg": "cyan"}, "marker": "braille"},
-                                {"name": "CH1", "data": adc_ch1, "style": {"fg": "yellow"}, "marker": "braille"}
+                            "append_datasets": [
+                                {"name": "CH0", "data": [[t_sec, ch0_val]]},
+                                {"name": "CH1", "data": [[t_sec, ch1_val]]}
                             ],
                             "x_axis": {"title": "Time (s)", "bounds": [x_min, x_max]},
                             "y_axis": {"title": "ADC Value", "bounds": [0, 1024]}
@@ -552,7 +562,17 @@ def main():
                 })
 
             # Traffic stats — update on the active page only
-            traffic_text = format_traffic(bytes_sent, bytes_recv)
+            now = time.monotonic()
+            elapsed = now - prev_time
+            if elapsed > 0:
+                tx_rate = (bytes_sent - prev_bytes_sent) / elapsed
+                rx_rate = (bytes_recv - prev_bytes_recv) / elapsed
+            else:
+                tx_rate = rx_rate = 0.0
+            prev_bytes_sent = bytes_sent
+            prev_bytes_recv = bytes_recv
+            prev_time = now
+            traffic_text = format_traffic(bytes_sent, bytes_recv, tx_rate, rx_rate)
             traffic_id = {
                 "dashboard": "traffic_bar",
                 "details": "traffic_bar2",
