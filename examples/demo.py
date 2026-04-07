@@ -419,8 +419,7 @@ def main():
     tick = 0
     adc_tick = 0
     active_page = "dashboard"
-    adc_ch0 = []
-    adc_ch1 = []
+    adc_timestamps = []  # tracks t_sec values for x-axis bounds
     cmd_log = ["Ready. Type a command and press Enter."]
     prev_mem = None
     prev_disk = None
@@ -456,7 +455,25 @@ def main():
                             ]
                         })
 
-            # Only send patches for the active page
+            # Compute traffic stats once per second — merged into page update below
+            traffic_update = None
+            if tick % 10 == 0:
+                now = time.monotonic()
+                elapsed = now - prev_time
+                if elapsed > 0:
+                    tx_rate = (bytes_sent - prev_bytes_sent) / elapsed
+                    rx_rate = (bytes_recv - prev_bytes_recv) / elapsed
+                else:
+                    tx_rate = rx_rate = 0.0
+                prev_bytes_sent = bytes_sent
+                prev_bytes_recv = bytes_recv
+                prev_time = now
+                traffic_text = format_traffic(bytes_sent, bytes_recv, tx_rate, rx_rate)
+                traffic_id = {"dashboard": "traffic_bar", "details": "traffic_bar2", "adc": "traffic_bar3"}.get(active_page)
+                if traffic_id:
+                    traffic_update = {"id": traffic_id, "text": traffic_text}
+
+            # Build and send a single patch per tick for the active page
             if active_page == "dashboard":
                 cpu = int(35 + 30 * math.sin(tick * 0.3) + random.randint(-5, 5))
                 cpu = max(0, min(100, cpu))
@@ -471,119 +488,77 @@ def main():
                     ["queue", max(0, min(100, 51 + random.randint(-7, 7)))]
                 ]
 
-                if cpu > 80:
-                    cpu_style = "$danger"
-                elif cpu > 60:
-                    cpu_style = "$warning"
-                else:
-                    cpu_style = "$ok"
+                cpu_style = "$danger" if cpu > 80 else "$warning" if cpu > 60 else "$ok"
 
                 updates = [
                     {"id": "cpu_gauge", "value": cpu, "style": cpu_style},
-                    # Only send mem/disk when they actually change
                     *(([{"id": "mem_gauge", "value": mem}]) if mem != prev_mem else []),
                     *(([{"id": "disk_line", "value": disk}]) if disk != prev_disk else []),
-                    # append_data sends only the new point — Rust appends to existing data array
                     {"id": "cpu_spark", "append_data": [cpu], "max_data_points": 30},
                     {"id": "bar_chart", "bars": services},
                 ]
                 prev_mem = mem
                 prev_disk = disk
 
+                if tick % 5 == 0:
+                    updates.append({"id": "log_list", "items": [
+                        f"[{tick:04d}] CPU: {cpu}% | Mem: {mem}% | Disk: {disk}%",
+                        "System boot complete", "Network interface eth0 up",
+                        "SSH service started", "Firewall rules loaded", "NTP synchronized",
+                        "Monitoring agent ready", "Database connection OK", "API server listening :8080"
+                    ]})
+                if traffic_update:
+                    updates.append(traffic_update)
+
                 send(conn, "patch", {"page": "dashboard", "updates": updates})
 
-                if tick % 5 == 0:
-                    new_logs = [
-                        f"[{tick:04d}] CPU: {cpu}% | Mem: {mem}% | Disk: {disk}%",
-                        "System boot complete",
-                        "Network interface eth0 up",
-                        "SSH service started",
-                        "Firewall rules loaded",
-                        "NTP synchronized",
-                        "Monitoring agent ready",
-                        "Database connection OK",
-                        "API server listening :8080"
-                    ]
-                    send(conn, "patch", {
-                        "page": "dashboard",
-                        "updates": [{"id": "log_list", "items": new_logs}]
-                    })
-
             elif active_page == "adc":
-                # adc_tick only advances while on the ADC page — no time gaps on page switch
                 adc_tick += 1
                 t_sec = adc_tick * 0.5
-                ch0_val = int(512 + 400 * math.sin(t_sec * 0.5) + random.randint(-20, 20))
-                ch1_val = int(300 + 250 * math.cos(t_sec * 0.3) + random.randint(-15, 15))
-                ch0_val = max(0, min(1024, ch0_val))
-                ch1_val = max(0, min(1024, ch1_val))
+                ch0_val = max(0, min(1024, int(512 + 400 * math.sin(t_sec * 0.5) + random.randint(-20, 20))))
+                ch1_val = max(0, min(1024, int(300 + 250 * math.cos(t_sec * 0.3) + random.randint(-15, 15))))
 
-                adc_ch0.append([t_sec, ch0_val])
-                adc_ch1.append([t_sec, ch1_val])
-                if len(adc_ch0) > 100:
-                    adc_ch0 = adc_ch0[-100:]
-                    adc_ch1 = adc_ch1[-100:]
+                adc_timestamps.append(t_sec)
+                if len(adc_timestamps) > 100:
+                    adc_timestamps = adc_timestamps[-100:]
+                x_min = adc_timestamps[0]
+                x_max = max(adc_timestamps[-1], x_min + 25)
 
-                x_min = adc_ch0[0][0] if adc_ch0 else 0
-                x_max = max(adc_ch0[-1][0] if adc_ch0 else 50, x_min + 25)
-
-                # Send only the new data point via append_data — O(1) bandwidth regardless of history size
-                send(conn, "patch", {
-                    "page": "adc",
-                    "updates": [
-                        {
-                            "id": "adc_chart",
-                            "append_data": [
-                                {"name": "CH0", "data": [[t_sec, ch0_val]]},
-                                {"name": "CH1", "data": [[t_sec, ch1_val]]}
-                            ],
-                            "x_axis": {"title": "Time (s)", "bounds": [x_min, x_max]},
-                            "y_axis": {"title": "ADC Value", "bounds": [0, 1024]}
-                        },
-                        {"id": "adc_ch0_gauge", "value": ch0_val},
-                        {"id": "adc_ch1_gauge", "value": ch1_val}
-                    ]
-                })
-
-            elif active_page == "details" and tick % 3 == 0:
-                rows = [
-                    ["1", "systemd", f"{random.uniform(0, 0.5):.1f}", "12", "running"],
-                    ["245", "sshd", f"{random.uniform(0, 0.3):.1f}", "8", "running"],
-                    ["512", "nginx", f"{random.uniform(1, 5):.1f}", "64", "running"],
-                    ["789", "postgres", f"{random.uniform(3, 8):.1f}", "256", "running"],
-                    ["1024", "node", f"{random.uniform(8, 20):.1f}", "512", "running"],
-                    ["1337", "redis", f"{random.uniform(0.5, 3):.1f}", "128", "running"],
-                    ["2048", "prometheus", f"{random.uniform(2, 6):.1f}", "384", "running"],
-                    ["4096", "grafana", f"{random.uniform(1, 4):.1f}", "196", "running"]
+                updates = [
+                    {
+                        "id": "adc_chart",
+                        "append_data": [
+                            {"name": "CH0", "data": [[t_sec, ch0_val]]},
+                            {"name": "CH1", "data": [[t_sec, ch1_val]]}
+                        ],
+                        "x_axis": {"title": "Time (s)", "bounds": [x_min, x_max]},
+                        "y_axis": {"title": "ADC Value", "bounds": [0, 1024]}
+                    },
+                    {"id": "adc_ch0_gauge", "value": ch0_val},
+                    {"id": "adc_ch1_gauge", "value": ch1_val},
                 ]
-                send(conn, "patch", {
-                    "page": "details",
-                    "updates": [{"id": "proc_table", "rows": rows}]
-                })
+                if traffic_update:
+                    updates.append(traffic_update)
 
-            # Traffic stats — update once per second (every 10 ticks) to save bandwidth
-            if tick % 10 == 0:
-                now = time.monotonic()
-                elapsed = now - prev_time
-                if elapsed > 0:
-                    tx_rate = (bytes_sent - prev_bytes_sent) / elapsed
-                    rx_rate = (bytes_recv - prev_bytes_recv) / elapsed
-                else:
-                    tx_rate = rx_rate = 0.0
-                prev_bytes_sent = bytes_sent
-                prev_bytes_recv = bytes_recv
-                prev_time = now
-                traffic_text = format_traffic(bytes_sent, bytes_recv, tx_rate, rx_rate)
-                traffic_id = {
-                    "dashboard": "traffic_bar",
-                    "details": "traffic_bar2",
-                    "adc": "traffic_bar3",
-                }.get(active_page)
-                if traffic_id:
-                    send(conn, "patch", {
-                        "page": active_page,
-                        "updates": [{"id": traffic_id, "text": traffic_text}]
-                    })
+                send(conn, "patch", {"page": "adc", "updates": updates})
+
+            elif active_page == "details":
+                updates = []
+                if tick % 3 == 0:
+                    updates.append({"id": "proc_table", "rows": [
+                        ["1", "systemd", f"{random.uniform(0, 0.5):.1f}", "12", "running"],
+                        ["245", "sshd", f"{random.uniform(0, 0.3):.1f}", "8", "running"],
+                        ["512", "nginx", f"{random.uniform(1, 5):.1f}", "64", "running"],
+                        ["789", "postgres", f"{random.uniform(3, 8):.1f}", "256", "running"],
+                        ["1024", "node", f"{random.uniform(8, 20):.1f}", "512", "running"],
+                        ["1337", "redis", f"{random.uniform(0.5, 3):.1f}", "128", "running"],
+                        ["2048", "prometheus", f"{random.uniform(2, 6):.1f}", "384", "running"],
+                        ["4096", "grafana", f"{random.uniform(1, 4):.1f}", "196", "running"],
+                    ]})
+                if traffic_update:
+                    updates.append(traffic_update)
+                if updates:
+                    send(conn, "patch", {"page": "details", "updates": updates})
 
     except (BrokenPipeError, KeyboardInterrupt, OSError):
         pass
